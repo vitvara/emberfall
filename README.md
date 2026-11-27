@@ -6,7 +6,18 @@ You and four bots (a tank, a healer and DPS) fight **Vyrathax, the Cinder Tyrant
 - **Design doc:** [DESIGN.md](DESIGN.md) covers stats, every skill, boss phases and bot AI.
 - **All numbers:** `scripts/data/game_data.gd`. Balancing means editing that file.
 
-## Run
+## Download and play
+
+Get the latest build from the [Releases page](https://github.com/vitvara/emberfall/releases): no install needed.
+
+- **Windows:** download `Emberfall-windows.zip`, unzip, run `Emberfall.exe`. If SmartScreen warns, click
+  **More info → Run anyway**.
+- **macOS:** download `Emberfall-macos.zip`, unzip, move `Emberfall.app` to Applications. The first time,
+  **right-click → Open** (or System Settings → Privacy & Security → **Open Anyway**), because the app isn't notarized.
+
+Then pick **Offline Practice** to play solo with bots, or connect to a realm (below).
+
+## Run from source
 
 ```sh
 ./run.sh            # play
@@ -22,7 +33,7 @@ Godot is installed at `~/Applications/Godot.app`. Set `GODOT=/path/to/Godot` to 
 
 ## Playing together
 
-1. Run a realm: `./run.sh server` (ours is the lab server at `10.10.10.30`, see below).
+1. Run a realm: `./run.sh server` (or use ours, see below).
 2. Players start the game, type the **realm address** and click **Connect**. The game remembers the last one.
 3. **Log in**, or click **Create an account** (name: 3-16 letters, numbers or `_`; password: 6+ characters).
    Accounts live on the realm. Passwords are stored as salted PBKDF2-SHA256 hashes, and the connection is
@@ -39,17 +50,10 @@ Godot is installed at `~/Applications/Godot.app`. Set `GODOT=/path/to/Godot` to 
 
 **Offline Practice** on the realm screen is the solo mode with bots.
 
-## Lab deployment (Proxmox + Cloudflare WARP)
+## Our realm
 
-The dedicated server runs in LXC **914 `lab-emberfall`** on node `pve`. It's on the lab server VLAN
-(`vmbr1`, tag 10) at **10.10.10.30**, port **UDP 24565**, as the systemd service `emberfall`.
-
-- Deploy or update by running `deploy/deploy-emberfall.sh` on the Proxmox host. It sets the VLAN and IP,
-  installs a checksum-verified Godot 4.7.2 Linux build, unpacks the game, and starts the service.
-- Players turn on Cloudflare WARP (it routes the lab's 10.10.x.x private network), type realm `10.10.10.30`,
-  then log in or register.
-- Accounts and the DTLS certificate live in `/var/lib/emberfall` inside the container and survive redeploys.
-- Logs: `pct exec 914 -- journalctl -u emberfall -f`. Restart: `pct exec 914 -- systemctl restart emberfall`.
+The party server runs privately and is reached over Cloudflare WARP. Turn WARP on, type realm `10.10.10.30`,
+then log in or register. Ask the host for access.
 
 ## Controls
 

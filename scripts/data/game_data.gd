@@ -1,0 +1,266 @@
+class_name GameData
+extends RefCounted
+## All tunable numbers live here: class stats, skills, auras, boss values.
+## See DESIGN.md for the formulas these feed into.
+
+const ROLE_TANK := "tank"
+const ROLE_HEALER := "healer"
+const ROLE_MELEE := "melee"
+const ROLE_RANGED := "ranged"
+
+const MELEE_RANGE := 5.0
+const SPELL_RANGE := 30.0
+const BASE_GCD := 1.5
+const ENERGY_GCD := 1.0
+const MOVE_SPEED := 7.0
+
+# Party composition. The player replaces the first slot of their chosen class.
+const PARTY_LAYOUT := ["warden", "oracle", "blademaster", "arcanist", "arcanist"]
+const CLASS_ORDER := ["warden", "oracle", "blademaster", "arcanist"]
+const BOT_NAMES := {
+	"warden": ["Thorgar"],
+	"oracle": ["Seliane"],
+	"blademaster": ["Kaito"],
+	"arcanist": ["Nyra", "Corvin"],
+}
+
+const CLASSES := {
+	"warden": {
+		"name": "Warden", "role": "tank", "resource": "rage",
+		"color": Color(0.78, 0.61, 0.43),
+		"desc": "Tank (warrior). Charge in, slam with your shield, hold the dragon.",
+		"stats": {"str": 200, "agi": 80, "int": 0, "sta": 450, "spi": 0,
+			"crit": 5.0, "haste": 0.0, "armor": 6000},
+		"threat_mult": 3.0,
+		"auto_attack": {"interval": 2.0, "base": 60, "coef": 0.4},
+		"abilities": ["bulwark_strike", "charge", "raise_shield", "challenging_shout",
+			"shield_bash", "execution_strike", "thunder_leap"],
+	},
+	"oracle": {
+		"name": "Oracle", "role": "healer", "resource": "mana",
+		"color": Color(0.95, 0.95, 0.85),
+		"desc": "Healer (priest). Heal, shield, and raise the fallen.",
+		"stats": {"str": 0, "agi": 0, "int": 320, "sta": 220, "spi": 220,
+			"crit": 5.0, "haste": 5.0, "armor": 1200},
+		"threat_mult": 1.0,
+		"auto_attack": {},
+		"abilities": ["flash_mend", "ward_of_dawn", "smite", "final_prayer",
+			"fade", "resurrection", "sanctuary"],
+	},
+	"blademaster": {
+		"name": "Blademaster", "role": "melee", "resource": "energy",
+		"color": Color(1.0, 0.93, 0.4),
+		"desc": "Melee DPS (rogue). Build combo points, spend them on finishers.",
+		"stats": {"str": 120, "agi": 260, "int": 0, "sta": 260, "spi": 0,
+			"crit": 10.0, "haste": 5.0, "armor": 1800},
+		"threat_mult": 1.0,
+		"auto_attack": {"interval": 1.6, "base": 60, "coef": 0.5},
+		"abilities": ["wicked_strike", "executioners_cut", "blade_rhythm", "throat_jab",
+			"sprint", "healing_draught", "poison_bomb"],
+	},
+	"arcanist": {
+		"name": "Arcanist", "role": "ranged", "resource": "mana",
+		"color": Color(0.45, 0.72, 1.0),
+		"desc": "Ranged DPS (mage). Frost and fire from afar, blink, counterspell.",
+		"stats": {"str": 0, "agi": 0, "int": 300, "sta": 200, "spi": 120,
+			"crit": 8.0, "haste": 5.0, "armor": 800},
+		"threat_mult": 1.0,
+		"auto_attack": {},
+		"abilities": ["frost_shard", "flame_jolt", "flicker", "counterspell",
+			"quickening", "frost_cone", "frost_storm"],
+	},
+}
+
+# Ability fields:
+#   cost, cast (sec, 0 = instant), cd (sec), gcd (bool), range (m),
+#   target: enemy | ally | dead_ally | self | none | ground,
+#   moving (castable while moving), min_range, below_pct (target must be under this HP %),
+#   radius (ground skills), effects: list of effect dictionaries (see Unit._apply_effect)
+const ABILITIES := {
+	# ---------------- Warden (warrior tank) ----------------
+	"bulwark_strike": {"name": "Bulwark Strike", "cost": 0, "cast": 0.0, "cd": 6.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Slam with your shield for 180 + 0.9 AP. Generates 15 Rage and double threat.",
+		"effects": [{"type": "damage", "school": "physical", "base": 180, "coef": 0.9, "threat": 2.0},
+			{"type": "resource", "amount": 15}]},
+	"charge": {"name": "Charge", "cost": 0, "cast": 0.0, "cd": 15.0, "gcd": false,
+		"range": 25.0, "min_range": 8.0, "target": "enemy", "moving": true,
+		"desc": "Rush to an enemy 8-25 m away. Generates 20 Rage.",
+		"effects": [{"type": "charge"}, {"type": "resource", "amount": 20}]},
+	"raise_shield": {"name": "Raise Shield", "cost": 20, "cast": 0.0, "cd": 12.0, "gcd": false,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "Block with your shield: take 40% less damage for 6 sec. Use it on Flame Breath.",
+		"effects": [{"type": "aura", "aura": "raise_shield", "on": "self"}]},
+	"challenging_shout": {"name": "Challenging Shout", "cost": 0, "cast": 0.0, "cd": 8.0, "gcd": false,
+		"range": SPELL_RANGE, "target": "enemy", "moving": true,
+		"desc": "Taunt: become the target's top threat.",
+		"effects": [{"type": "taunt"}]},
+	"shield_bash": {"name": "Shield Bash", "cost": 10, "cast": 0.0, "cd": 12.0, "gcd": false,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Interrupt the target's spell and deal 80 + 0.3 AP.",
+		"effects": [{"type": "interrupt"},
+			{"type": "damage", "school": "physical", "base": 80, "coef": 0.3, "threat": 1.0}]},
+	"execution_strike": {"name": "Execution Strike", "cost": 30, "cast": 0.0, "cd": 0.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true, "below_pct": 0.2,
+		"desc": "Only on targets below 20% health: a brutal blow for 500 + 2.2 AP.",
+		"effects": [{"type": "damage", "school": "physical", "base": 500, "coef": 2.2, "threat": 1.5}]},
+	"thunder_leap": {"name": "Thunder Leap", "cost": 0, "cast": 0.0, "cd": 20.0, "gcd": true,
+		"range": 30.0, "target": "ground", "radius": 8.0, "moving": true,
+		"desc": "GROUND: leap to the clicked spot. On landing, hit every enemy within 8 m for 200 + 0.8 AP with triple threat.",
+		"effects": [{"type": "leap", "school": "physical", "base": 200, "coef": 0.8, "threat": 3.0}]},
+
+	# ---------------- Oracle (priest healer) ----------------
+	"flash_mend": {"name": "Flash Mend", "cost": 200, "cast": 1.5, "cd": 0.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "ally",
+		"desc": "Fast heal for 750 + 1.4 SP.",
+		"effects": [{"type": "heal", "base": 750, "coef": 1.4}]},
+	"ward_of_dawn": {"name": "Ward of Dawn", "cost": 200, "cast": 0.0, "cd": 6.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "ally", "moving": true,
+		"desc": "Shield an ally, absorbing 700 + 1.2 SP damage for 15 sec.",
+		"effects": [{"type": "aura", "aura": "ward_of_dawn", "on": "target"}]},
+	"smite": {"name": "Smite", "cost": 60, "cast": 1.5, "cd": 0.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "enemy",
+		"desc": "Holy bolt for 220 + 0.9 SP.",
+		"effects": [{"type": "damage", "school": "holy", "base": 220, "coef": 0.9}]},
+	"final_prayer": {"name": "Final Prayer", "cost": 0, "cast": 0.0, "cd": 90.0, "gcd": false,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "Emergency: heal yourself for 30% and gain 20% max HP for 10 sec.",
+		"effects": [{"type": "aura", "aura": "final_prayer", "on": "self"}]},
+	"fade": {"name": "Fade", "cost": 0, "cast": 0.0, "cd": 30.0, "gcd": false,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "Fade from enemies' minds: drop 90% of your threat. Shakes off whelps.",
+		"effects": [{"type": "threat_drop", "keep": 0.1}, {"type": "aura", "aura": "fade", "on": "self"}]},
+	"resurrection": {"name": "Resurrection", "cost": 400, "cast": 6.0, "cd": 120.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "dead_ally",
+		"desc": "Bring a dead ally back to life with 40% health. Click their party frame first.",
+		"effects": [{"type": "revive", "pct": 0.4}]},
+	"sanctuary": {"name": "Sanctuary", "cost": 400, "cast": 0.0, "cd": 15.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "ground", "radius": 8.0, "moving": true,
+		"desc": "GROUND: consecrate the clicked spot for 8 sec. Allies inside heal 130 + 0.28 SP every second.",
+		"effects": [{"type": "zone", "kind": "holy", "duration": 8.0, "interval": 1.0, "hits": "allies",
+			"effect": {"type": "heal", "base": 130, "coef": 0.28}}]},
+
+	# ---------------- Blademaster (rogue) ----------------
+	"wicked_strike": {"name": "Wicked Strike", "cost": 40, "cast": 0.0, "cd": 0.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Strike for 160 + 0.95 AP. Awards 1 combo point (35% chance for 2).",
+		"effects": [{"type": "damage", "school": "physical", "base": 160, "coef": 0.95},
+			{"type": "combo", "amount": 1, "bonus_chance": 0.35}]},
+	"executioners_cut": {"name": "Executioner's Cut", "cost": 35, "cast": 0.0, "cd": 0.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true, "needs_combo": true,
+		"desc": "Finisher: (150 + 0.65 AP) damage per combo point.",
+		"effects": [{"type": "finisher", "school": "physical", "base": 150, "coef": 0.65}]},
+	"blade_rhythm": {"name": "Blade Rhythm", "cost": 25, "cast": 0.0, "cd": 0.0, "gcd": true,
+		"range": 0.0, "target": "self", "moving": true, "needs_combo": true,
+		"desc": "Finisher: +35% Haste for 6 sec + 4 sec per combo point.",
+		"effects": [{"type": "finisher_aura", "aura": "blade_rhythm", "base_dur": 6.0, "per_point": 4.0}]},
+	"throat_jab": {"name": "Throat Jab", "cost": 20, "cast": 0.0, "cd": 15.0, "gcd": false,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Kick: interrupt the target's spell.",
+		"effects": [{"type": "interrupt"}]},
+	"sprint": {"name": "Sprint", "cost": 0, "cast": 0.0, "cd": 60.0, "gcd": false,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "+70% movement speed for 8 sec.",
+		"effects": [{"type": "aura", "aura": "sprint", "on": "self"}]},
+	"healing_draught": {"name": "Healing Draught", "cost": 20, "cast": 0.0, "cd": 30.0, "gcd": true,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "Drink a tonic: heal 30% of your max HP over 4 sec.",
+		"effects": [{"type": "aura", "aura": "healing_draught", "on": "self"}]},
+	"poison_bomb": {"name": "Poison Bomb", "cost": 35, "cast": 0.0, "cd": 15.0, "gcd": true,
+		"range": 25.0, "target": "ground", "radius": 6.0, "moving": true,
+		"desc": "GROUND: throw a vial at the clicked spot. Enemies inside take 60 + 0.3 AP nature damage every second for 8 sec.",
+		"effects": [{"type": "zone", "kind": "poison", "duration": 8.0, "interval": 1.0, "hits": "enemies",
+			"effect": {"type": "damage", "school": "nature", "base": 60, "coef": 0.3}, "aura": "poisoned"}]},
+
+	# ---------------- Arcanist (mage) ----------------
+	"frost_shard": {"name": "Frost Shard", "cost": 55, "cast": 2.0, "cd": 0.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "enemy",
+		"desc": "Hurl ice for 260 + 0.95 SP frost and chill the target (50% slow, 5 sec).",
+		"effects": [{"type": "damage", "school": "frost", "base": 260, "coef": 0.95},
+			{"type": "aura", "aura": "chilled", "on": "target"}]},
+	"flame_jolt": {"name": "Flame Jolt", "cost": 70, "cast": 0.0, "cd": 8.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "enemy", "moving": true,
+		"desc": "Instant fire blast for 260 + 0.9 SP. Castable while moving.",
+		"effects": [{"type": "damage", "school": "fire", "base": 260, "coef": 0.9}]},
+	"flicker": {"name": "Flicker", "cost": 60, "cast": 0.0, "cd": 15.0, "gcd": false,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "Blink: teleport 12 m forward. Dodge breath and meteors.",
+		"effects": [{"type": "blink", "distance": 12.0}]},
+	"counterspell": {"name": "Counterspell", "cost": 50, "cast": 0.0, "cd": 24.0, "gcd": false,
+		"range": SPELL_RANGE, "target": "enemy", "moving": true,
+		"desc": "Interrupt the target's spell from range. Stops Cataclysm!",
+		"effects": [{"type": "interrupt"}]},
+	"quickening": {"name": "Quickening", "cost": 0, "cast": 0.0, "cd": 120.0, "gcd": false,
+		"range": 0.0, "target": "none", "moving": true,
+		"desc": "Warp time: the whole party gains +30% Haste for 15 sec.",
+		"effects": [{"type": "aura", "aura": "quickening", "on": "party"}]},
+	"frost_cone": {"name": "Frost Cone", "cost": 90, "cast": 0.0, "cd": 10.0, "gcd": true,
+		"range": 0.0, "target": "none", "moving": true,
+		"desc": "Blast of cold in a 12 m cone in front of you: 160 + 0.5 SP frost and chill.",
+		"effects": [{"type": "cone_damage", "school": "frost", "base": 160, "coef": 0.5, "length": 12.0,
+			"half_angle": 45.0, "aura": "chilled"}]},
+	"frost_storm": {"name": "Frost Storm", "cost": 180, "cast": 0.0, "cd": 18.0, "gcd": true,
+		"range": SPELL_RANGE, "target": "ground", "radius": 8.0, "moving": true,
+		"desc": "GROUND: ice rains on the clicked spot for 8 sec: 70 + 0.3 SP frost every second and chill.",
+		"effects": [{"type": "zone", "kind": "frost", "duration": 8.0, "interval": 1.0, "hits": "enemies",
+			"effect": {"type": "damage", "school": "frost", "base": 70, "coef": 0.3}, "aura": "chilled"}]},
+}
+
+# Aura fields:
+#   duration, debuff, max_stacks, tick (interval), tick_effect (heal | damage | heal_pct),
+#   mods: damage_taken (mult), damage_done (mult), haste (+%), max_hp (mult), speed (mult)
+#   stack_mods: fire_taken (+ per stack), absorb, apply_heal_pct
+# Aura fields:
+#   duration, debuff, max_stacks, tick (interval), tick_effect (heal | damage | heal_pct),
+#   mods: damage_taken (mult), damage_done (mult), haste (+%), max_hp (mult), speed (mult)
+#   stack_mods: fire_taken (+ per stack), absorb, apply_heal_pct
+#   icon: shown in the buff/debuff bars; kind: buff | magic | poison | fire | physical (debuff border colour)
+const AURAS := {
+	"raise_shield": {"name": "Raise Shield", "duration": 6.0, "mods": {"damage_taken": 0.6},
+		"icon": "raise_shield", "kind": "buff", "desc": "Taking 40% less damage."},
+	"ward_of_dawn": {"name": "Ward of Dawn", "duration": 15.0, "absorb": {"base": 700, "coef": 1.2},
+		"icon": "ward_of_dawn", "kind": "buff", "desc": "Absorbing damage."},
+	"final_prayer": {"name": "Final Prayer", "duration": 10.0, "mods": {"max_hp": 1.2}, "apply_heal_pct": 0.3,
+		"icon": "final_prayer", "kind": "buff", "desc": "Maximum health increased by 20%."},
+	"fade": {"name": "Fade", "duration": 6.0, "icon": "fade", "kind": "buff", "desc": "Faded from the enemy's mind."},
+	"blade_rhythm": {"name": "Blade Rhythm", "duration": 10.0, "mods": {"haste": 35.0},
+		"icon": "blade_rhythm", "kind": "buff", "desc": "Haste increased by 35%."},
+	"sprint": {"name": "Sprint", "duration": 8.0, "mods": {"speed": 1.7},
+		"icon": "sprint", "kind": "buff", "desc": "Movement speed increased by 70%."},
+	"healing_draught": {"name": "Healing Draught", "duration": 4.0, "tick": 1.0,
+		"tick_effect": {"type": "heal_pct", "pct": 0.075},
+		"icon": "healing_draught", "kind": "buff", "desc": "Healing 7.5% of max health every second."},
+	"quickening": {"name": "Quickening", "duration": 15.0, "mods": {"haste": 30.0},
+		"icon": "quickening", "kind": "buff", "desc": "Haste increased by 30%."},
+	"chilled": {"name": "Chilled", "duration": 5.0, "debuff": true, "mods": {"speed": 0.5},
+		"icon": "frost_shard", "kind": "magic", "desc": "Movement slowed by 50%."},
+	"poisoned": {"name": "Poisoned", "duration": 2.0, "debuff": true,
+		"icon": "poison_bomb", "kind": "poison", "desc": "Choking on toxic fumes."},
+	# Boss debuffs
+	"seared": {"name": "Seared", "duration": 15.0, "debuff": true, "max_stacks": 3,
+		"stack_mods": {"fire_taken": 0.10}, "icon": "flame_jolt", "kind": "fire",
+		"desc": "Fire damage taken increased by 10% per stack."},
+	"burning": {"name": "Burning", "duration": 1.5, "debuff": true,
+		"icon": "flame_jolt", "kind": "fire", "desc": "Standing in fire! Move!"},
+	"enraged": {"name": "Enraged", "duration": 9999.0, "mods": {"damage_done": 3.0},
+		"icon": "challenging_shout", "kind": "buff", "desc": "Damage done tripled."},
+}
+
+const BOSS := {
+	"name": "Vyrathax, the Cinder Tyrant",
+	"hp": 340000,
+	"armor": 3000,
+	"radius": 3.5,
+	"enrage_time": 360.0,
+	"melee": {"interval": 2.0, "damage": 420},
+	"rending_claw": {"interval": 10.0, "damage": 850},
+	"flame_breath": {"interval": 25.0, "cast": 2.5, "damage": 2200, "length": 30.0, "half_angle": 45.0},
+	"tail_lash": {"interval": 14.0, "damage": 800, "knockback": 10.0, "length": 14.0, "half_angle": 45.0},
+	"cinder_pools": {"interval": 20.0, "count": 2, "radius": 4.0, "dps": 300, "duration": 25.0},
+	"phase2_at": 0.70,
+	"air_duration": 40.0,
+	"meteor": {"interval": 4.0, "count": 2, "radius": 6.0, "delay": 3.0, "damage": 1400},
+	"whelp": {"hp": 9000, "damage": 140, "interval": 1.5, "count": 3, "waves": [3.0, 20.0]},
+	"inferno_pulse": {"interval": 15.0, "damage": 450},
+	"cataclysm": {"interval": 30.0, "cast": 4.0, "damage": 2200, "first": 12.0},
+}

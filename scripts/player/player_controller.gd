@@ -101,7 +101,7 @@ func _update_camera() -> void:
 	var focus := unit.position + Vector3(0, 1.6, 0)
 	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
 	camera.position = focus + off
-	camera.look_at(focus, Vector3.UP)
+	camera.look_at(global_transform * focus, Vector3.UP)  # focus is local (the Outpost sits off-origin)
 	if _trauma > 0.0:
 		var s := _trauma * _trauma
 		camera.position += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.35 * s

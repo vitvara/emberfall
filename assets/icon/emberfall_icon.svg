@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Emberfall app icon: Vyrathax's horned head, front on, rising out of fire. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a0405"/>
+      <stop offset="0.55" stop-color="#2c0806"/>
+      <stop offset="1" stop-color="#5a1405"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="512" cy="760" r="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9a2a" stop-opacity="0.85"/>
+      <stop offset="0.45" stop-color="#d8400c" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#600c04" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffe08a"/>
+      <stop offset="0.3" stop-color="#ff9a26"/>
+      <stop offset="0.65" stop-color="#e0430e"/>
+      <stop offset="1" stop-color="#8a1606" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="flameCore" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#fff4c8"/>
+      <stop offset="0.5" stop-color="#ffc24a"/>
+      <stop offset="1" stop-color="#ff7a1a" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="hide" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a1212"/>
+      <stop offset="0.6" stop-color="#1c0808"/>
+      <stop offset="1" stop-color="#0c0304"/>
+    </linearGradient>
+    <linearGradient id="horn" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#4a2a22"/>
+      <stop offset="0.6" stop-color="#2a1612"/>
+      <stop offset="1" stop-color="#140a08"/>
+    </linearGradient>
+    <radialGradient id="eyeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffd25a" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#ff6a10" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ff3a00" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile">
+      <rect x="40" y="40" width="944" height="944" rx="210"/>
+    </clipPath>
+
+    <!-- Left half of the head; the right half is its mirror image -->
+    <g id="half">
+      <!-- Great horn: sweeps out from the brow, then back and up -->
+      <path d="M 432 318 C 360 300 286 262 262 196 C 248 156 256 112 286 72 C 282 128 292 176 330 214 C 366 250 420 268 456 300 Z"
+            fill="url(#horn)" stroke="#ff7a24" stroke-opacity="0.6" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M 300 120 C 296 170 318 214 360 246" stroke="#7a4a36" stroke-opacity="0.7" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <!-- Lower cheek horn -->
+      <path d="M 352 404 C 296 384 226 368 150 376 C 214 404 270 432 336 458 Z" fill="url(#horn)" stroke="#ff7a24" stroke-opacity="0.5" stroke-width="5"/>
+      <!-- Head fill (no outline here, so the mirrored halves meet without a seam) -->
+      <path d="M 512 292 C 468 292 428 302 392 322 L 322 350 C 342 390 350 428 346 462 L 286 502 L 352 524
+               C 376 600 410 672 446 738 C 466 778 488 810 512 822 Z" fill="url(#hide)"/>
+      <!-- Rim-lit outline of the left side only -->
+      <path d="M 512 292 C 468 292 428 302 392 322 L 322 350 C 342 390 350 428 346 462 L 286 502 L 352 524
+               C 376 600 410 672 446 738 C 466 778 488 810 512 822"
+            fill="none" stroke="#ff8a2a" stroke-width="6" stroke-linejoin="round"/>
+      <!-- Scales along the muzzle -->
+      <path d="M 502 560 L 474 578 M 502 618 L 478 636 M 502 676 L 484 692" stroke="#5a2418" stroke-width="7" stroke-linecap="round"/>
+      <!-- Heavy brow ridge -->
+      <path d="M 348 394 L 490 430 L 486 450 L 358 420 Z" fill="#0a0303" stroke="#ff7a24" stroke-opacity="0.5" stroke-width="3"/>
+      <!-- Burning eye -->
+      <ellipse cx="428" cy="462" rx="82" ry="48" fill="url(#eyeGlow)"/>
+      <path d="M 376 446 L 482 466 L 468 486 L 382 466 Z" fill="#ffcf4a"/>
+      <path d="M 432 452 L 442 458 L 438 478 L 428 474 Z" fill="#2a0600"/>
+      <!-- Fangs -->
+      <path d="M 450 728 L 466 812 L 482 740 Z" fill="#f2e2c4" stroke="#3a1a10" stroke-width="3"/>
+      <path d="M 410 652 L 418 712 L 434 668 Z" fill="#e8d4b0" stroke="#3a1a10" stroke-width="3"/>
+      <!-- Smouldering nostril -->
+      <ellipse cx="486" cy="764" rx="34" ry="22" fill="url(#eyeGlow)"/>
+      <path d="M 472 754 L 502 766 L 496 776 L 468 764 Z" fill="#ff9a2a"/>
+    </g>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#glow)"/>
+    <!-- Wall of fire behind the head -->
+    <path d="M 40 1000 L 40 640 C 90 560 120 470 104 380 C 160 450 186 520 180 600 C 214 520 232 420 214 310
+             C 286 400 314 500 296 610 C 340 540 360 450 350 360 C 420 460 430 560 410 660 L 614 660
+             C 594 560 604 460 674 360 C 664 450 684 540 728 610 C 710 500 738 400 810 310 C 792 420 810 520 844 600
+             C 838 520 864 450 920 380 C 904 470 934 560 984 640 L 984 1000 Z" fill="url(#flame)"/>
+    <path d="M 120 1000 C 150 860 150 780 130 700 C 190 760 214 830 210 900 C 250 820 262 740 250 660 C 320 740 330 830 312 940
+             C 330 960 360 980 400 1000 L 624 1000 C 664 980 694 960 712 940 C 694 830 704 740 774 660 C 762 740 774 820 814 900
+             C 810 830 834 760 894 700 C 874 780 874 860 904 1000 Z"
+          fill="url(#flameCore)" opacity="0.9"/>
+    <!-- The head -->
+    <use xlink:href="#half"/>
+    <use xlink:href="#half" transform="translate(1024 0) scale(-1 1)"/>
+    <!-- Crest of spikes up the middle of the skull -->
+    <path d="M 512 210 L 538 300 L 486 300 Z" fill="url(#horn)" stroke="#ff8a2a" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M 512 330 L 530 384 L 494 384 Z" fill="#2a1210" stroke="#ff7a24" stroke-opacity="0.6" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M 512 400 L 526 446 L 498 446 Z" fill="#2a1210" stroke="#ff7a24" stroke-opacity="0.5" stroke-width="4" stroke-linejoin="round"/>
+    <!-- Flames licking up in front of the jaw -->
+    <path d="M 260 1000 C 290 930 300 880 286 820 C 336 870 352 920 344 980 C 380 930 394 870 384 806 C 440 870 450 940 430 1000 Z" fill="url(#flame)"/>
+    <path d="M 764 1000 C 734 930 724 880 738 820 C 688 870 672 920 680 980 C 644 930 630 870 640 806 C 584 870 574 940 594 1000 Z" fill="url(#flame)"/>
+    <path d="M 420 1000 C 450 940 470 900 512 860 C 554 900 574 940 604 1000 Z" fill="url(#flameCore)"/>
+    <!-- Embers (sparks, not dots) -->
+    <g fill="#ffc45a">
+      <path d="M 170 250 l 8 -16 l 8 16 l -8 16 Z"/>
+      <path d="M 862 220 l 7 -14 l 7 14 l -7 14 Z"/>
+      <path d="M 790 150 l 5 -10 l 5 10 l -5 10 Z"/>
+      <path d="M 250 520 l 6 -12 l 6 12 l -6 12 Z"/>
+      <path d="M 800 470 l 6 -12 l 6 12 l -6 12 Z"/>
+      <path d="M 120 140 l 5 -10 l 5 10 l -5 10 Z"/>
+      <path d="M 905 330 l 5 -10 l 5 10 l -5 10 Z"/>
+    </g>
+  </g>
+  <!-- Bevelled gold rim -->
+  <rect x="44" y="44" width="936" height="936" rx="206" fill="none" stroke="#c9862e" stroke-width="10" stroke-opacity="0.85"/>
+  <rect x="58" y="58" width="908" height="908" rx="194" fill="none" stroke="#3a0c06" stroke-width="6" stroke-opacity="0.9"/>
+</svg>

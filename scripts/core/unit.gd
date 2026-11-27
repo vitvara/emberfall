@@ -52,8 +52,9 @@ var gcd_total := 1.5
 var casting := {}
 var target: Unit = null
 var threat := {}
-var forced_target: Unit = null
-var forced_target_time := 0.0
+var forced_target: Unit = null   # taunt: who the monster is locked onto...
+var forced_target_time := 0.0    # ...and for how much longer
+var damage_by := {}              # monsters: party member -> damage they have dealt to it
 var auto_timer := 0.0
 var moved_this_tick := false
 var crit_streak := 0
@@ -64,9 +65,15 @@ var net_id := -1
 var owner_peer := 0        # 0 = bot / AI
 var net_pos := Vector3.ZERO
 var net_rot := 0.0
+var net_from := Vector3.ZERO  # where the replica stood when the last snapshot arrived...
+var net_rot_from := 0.0
+var net_lerp := 1.0           # ...and how far (0..1) it has walked toward net_pos since
 var net_dashing := false
 var dash := {}  # {from, to, t, dur, height, on_land}
 
+## Aggro: a taunt locks a monster onto the taunter for TAUNT_HOLD seconds. With no taunt holding it,
+## a monster goes for whoever has dealt it the most damage, so the tank has to keep taunting.
+const TAUNT_HOLD := 20.0
 const GRAVITY := 22.0
 const JUMP_SPEED := 7.5
 
@@ -539,6 +546,8 @@ func _apply_effect(e: Dictionary, t: Unit, ab: Dictionary, point = null) -> void
 			for en in world.units:
 				if en.team != team and en.threat.has(self):
 					en.threat[self] = float(en.threat[self]) * float(e["keep"])
+				if en.team != team and en.damage_by.has(self):
+					en.damage_by[self] = float(en.damage_by[self]) * float(e["keep"])
 		"revive":
 			t.revive(float(e["pct"]), self)
 		"charge":
@@ -606,6 +615,7 @@ func take_damage(amount: float, school: String, source: Unit, label: String, cri
 			source.add_resource(amt / 30.0)
 		if team == "enemy" and source.team == "party":
 			add_threat(source, (amt + absorbed) * threat_factor * source.threat_mult)
+			damage_by[source] = float(damage_by.get(source, 0.0)) + amt + absorbed
 	world.on_damage(self, source, amt, absorbed, crit, label, school)
 	if hp <= 0.0:
 		die()
@@ -703,15 +713,28 @@ func taunted_by(src: Unit) -> void:
 		return
 	threat[src] = top_threat_value() * 1.1 + 100.0
 	forced_target = src
-	forced_target_time = 3.0
+	forced_target_time = TAUNT_HOLD
 	target = src
 	in_combat = true
 	world.start_combat()
 
 
+## Who the monster attacks: the taunter while a taunt holds, else its top damage dealer
+## (staying on the current target unless someone has dealt 10% more), else the threat table
+## (whelps start with a little threat on a random hero before anyone hits them).
 func get_threat_target() -> Unit:
-	if forced_target_time > 0.0 and forced_target != null and forced_target.alive:
+	if is_taunted():
 		return forced_target
+	var top: Unit = null
+	var top_v := 0.0
+	for u in damage_by:
+		if u.alive and float(damage_by[u]) > top_v:
+			top = u
+			top_v = float(damage_by[u])
+	if top != null:
+		if target != null and target.alive and damage_by.has(target) and top_v <= float(damage_by[target]) * 1.1:
+			return target
+		return top
 	var best: Unit = null
 	var best_v := -1.0
 	for u in threat:
@@ -721,6 +744,18 @@ func get_threat_target() -> Unit:
 	if target != null and target.alive and threat.has(target):
 		if best_v <= float(threat[target]) * 1.1:
 			return target
+	return best
+
+
+func is_taunted() -> bool:
+	return forced_target_time > 0.0 and forced_target != null and forced_target.alive
+
+
+func top_damage_value() -> float:
+	var best := 0.0
+	for u in damage_by:
+		if u.alive:
+			best = maxf(best, float(damage_by[u]))
 	return best
 
 

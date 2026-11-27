@@ -41,6 +41,7 @@ var emote_label: Label
 var error_label: Label
 var msg_label: Label
 var countdown_label: Label
+var taunt_label: Label
 var ground_label: Label
 var timer_label: Label
 var latency_label: Label
@@ -193,6 +194,7 @@ func bind(w, ctrl) -> void:
 	msg_label = _center_label(18, Color.WHITE, 0.62)
 	error_label = _center_label(18, Color(1, 0.3, 0.3), 0.67)
 	countdown_label = _center_label(48, Color(1, 0.85, 0.4), 0.4)
+	taunt_label = _center_label(22, Color(1, 0.6, 0.25), 0.2)
 	ground_label = _center_label(17, Color(0.5, 1, 0.6), 0.72)
 	controller.ground_mode.connect(func(t: String): ground_label.text = t)
 	world.emote.connect(_on_emote)
@@ -445,7 +447,7 @@ func _end_button(text: String, sig: Signal) -> void:
 	end_buttons.add_child(b)
 
 
-## Solo: Retry / Change class. Party leader: Retry / Back to lobby. Members wait for the leader.
+## Solo: Retry / Change class. Party leader: Retry / Back to Outpost. Members wait for the leader.
 func configure_end_buttons() -> void:
 	for c in end_buttons.get_children():
 		c.queue_free()
@@ -454,7 +456,7 @@ func configure_end_buttons() -> void:
 		_end_button("Change class", menu_requested)
 	elif Net.is_leader():
 		_end_button("Retry", retry_requested)
-		_end_button("Back to lobby", lobby_requested)
+		_end_button("Back to Outpost", lobby_requested)
 		_end_button("Leave party", leave_requested)
 	else:
 		var l := _label("Waiting for the party leader...", 14, UITheme.GOLD_DIM)
@@ -747,7 +749,7 @@ func _ask_surrender() -> void:
 		set_menu_open(false)
 		Net.request("vote", [true])
 	else:
-		_confirm("Start a vote to surrender?\nIf most of the party agrees within %d seconds, everyone returns to the lobby." % int(Net.VOTE_TIME),
+		_confirm("Start a vote to surrender?\nIf most of the party agrees within %d seconds, everyone returns to the Outpost." % int(Net.VOTE_TIME),
 			"Start Vote", func(): surrender_requested.emit())
 
 
@@ -843,6 +845,22 @@ func _on_fight_ended(won: bool) -> void:
 
 # ------------------------------------------------------------------ update
 
+## Tanks: a warning as their taunt runs out (or when the dragon is loose on someone else).
+func _update_taunt_warning() -> void:
+	var me: Unit = world.player
+	var boss: Unit = world.boss
+	taunt_label.text = ""
+	if me == null or me.role != GameData.ROLE_TANK or not me.alive or not world.combat_active or not boss.alive \
+			or boss.untargetable:
+		return
+	if boss.is_taunted() and boss.forced_target == me:
+		if boss.forced_target_time <= 5.0:
+			taunt_label.text = "Taunt fading in %d — taunt again (3)!" % ceili(boss.forced_target_time)
+	elif not boss.is_taunted() and boss.target != null and boss.target != me:
+		taunt_label.text = "Vyrathax is on %s — taunt (3)!" % boss.target.unit_name
+	taunt_label.modulate.a = 0.65 + 0.35 * sin(Time.get_ticks_msec() / 120.0) if taunt_label.text != "" else 1.0
+
+
 func _process(delta: float) -> void:
 	if world == null or fight_ui == null:
 		return
@@ -863,6 +881,7 @@ func _process(delta: float) -> void:
 		countdown_label.text = "You are the tank — taunt (3) or strike the dragon to pull!"
 	else:
 		countdown_label.text = ""
+	_update_taunt_warning()
 	_update_boss()
 	_update_unit_frame(player_ui, world.player)
 	var t: Unit = world.player.target
@@ -1019,16 +1038,21 @@ func _meter_text(max_rows: int) -> String:
 	for i in mini(3, heal_rows.size()):
 		lines.append("  %-10s %7s  %5d" % [heal_rows[i][0].unit_name, _k(heal_rows[i][1]), int(heal_rows[i][1] / t)])
 	var boss: Unit = world.boss
-	var top := boss.top_threat_value()
-	if top > 0.0 and max_rows <= 5:
-		lines.append("Threat on boss")
-		var th: Array = []
-		for u in boss.threat:
-			if u.alive:
-				th.append([u, float(boss.threat[u])])
-		th.sort_custom(func(a, b): return a[1] > b[1])
-		for i in mini(3, th.size()):
-			lines.append("  %-10s %3d%%" % [th[i][0].unit_name, int(th[i][1] / top * 100.0)])
+	if world.combat_active and max_rows <= 5:
+		if boss.is_taunted():
+			lines.append("Taunt  %s  %ds" % [boss.forced_target.unit_name, ceili(boss.forced_target_time)])
+		else:
+			lines.append("No taunt — top damage has aggro")
+		var top := boss.top_damage_value()
+		if top > 0.0:
+			lines.append("Aggro (damage to boss)")
+			var th: Array = []
+			for u in boss.damage_by:
+				if u.alive:
+					th.append([u, float(boss.damage_by[u])])
+			th.sort_custom(func(a, b): return a[1] > b[1])
+			for i in mini(3, th.size()):
+				lines.append("  %-10s %3d%%" % [th[i][0].unit_name, int(th[i][1] / top * 100.0)])
 	return "\n".join(lines)
 
 

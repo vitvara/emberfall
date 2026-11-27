@@ -1,7 +1,8 @@
 class_name MenuUI
 extends CanvasLayer
-## Player journey: Realm (type the server address) -> Login / Register -> War Party lobby.
-## Offline practice (solo vs. bots) is reachable from the realm screen.
+## Player journey: Realm (type the server address) -> Login / Register -> Choose your hero -> the Outpost.
+## In the Outpost the raid portal (or Esc) opens the War Party window: create or join a party; the
+## leader starts the raid. Offline practice (solo vs. bots) is reachable from the realm screen.
 ## If the game crashed or the link dropped mid-raid, logging back in shows the Rejoin screen.
 
 signal connect_requested(address: String, port: int)
@@ -11,6 +12,8 @@ signal solo_start(class_id: String, autoplay: bool)
 signal logout_requested
 signal quit_requested
 signal rejoin_requested
+signal hub_requested  # close the War Party window and walk the Outpost again
+signal hero_chosen(class_id: String)
 
 const CONFIG_PATH := "user://client.cfg"
 const CLASS_ICONS := {
@@ -37,24 +40,23 @@ var auth_status: Label
 var auth_realm: Label
 var registering := false
 var auto_check: CheckBox
-var lobby_info: Label
-var comp_label: Label
-var slot_box: VBoxContainer
-var chat_log: RichTextLabel
-var chat_edit: LineEdit
-var start_btn: Button
-var who_label: Label
-var lobby_latency: Label
-var rejoin_btn: Button
+var hero_back: Button
+var party_title: Label
+var party_info: Label
+var party_body: VBoxContainer
+var party_foot: HBoxContainer
+var party_latency: Label
 var rejoin_title: Label
 var rejoin_body: Label
 var rejoin_stats: Label
 var rejoin_icon: TextureRect
+var rejoin_hub_btn: Button
 var _lat_t := 0.0
 var _cfg := ConfigFile.new()
 
 
 func _ready() -> void:
+	layer = 5  # above the Outpost's chat and party box
 	_cfg.load(CONFIG_PATH)
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -68,10 +70,10 @@ func _ready() -> void:
 	_build_realm()
 	_build_auth()
 	_build_solo()
-	_build_lobby()
+	_build_hero()
+	_build_party()
 	_build_rejoin()
-	Net.lobby_changed.connect(_refresh_lobby)
-	Net.chat_received.connect(_on_chat)
+	Net.lobby_changed.connect(_refresh_party)
 	Net.status_changed.connect(func(t: String): realm_status.text = t)
 	show_screen("realm")
 
@@ -93,14 +95,35 @@ func show_screen(n: String, status := "") -> void:
 				user_edit.grab_focus()
 			else:
 				pass_edit.grab_focus()
-		"lobby":
-			_refresh_lobby()
+		"party":
+			_refresh_party()
+		"hero":
+			hero_back.visible = _in_hub()
 
 
 func hide_all() -> void:
 	visible = false
 	for k in screens:
 		screens[k].visible = false
+
+
+func cfg_value(key: String, default = null):
+	return _cfg.get_value("client", key, default)
+
+
+func _in_hub() -> bool:
+	return Net.main != null and Net.main.hub != null
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	var k := event as InputEventKey
+	if not visible or not k.pressed or k.echo or k.keycode != KEY_ESCAPE or not _in_hub():
+		return
+	if get_viewport().gui_get_focus_owner() is LineEdit:
+		get_viewport().gui_release_focus()
+	elif screens["party"].visible or screens["rejoin"].visible or (screens["hero"].visible and hero_back.visible):
+		hub_requested.emit()
+	get_viewport().set_input_as_handled()
 
 
 func remember(key: String, value) -> void:
@@ -322,14 +345,14 @@ func _build_solo() -> void:
 	var p := _center_panel(860, 600)
 	screens["solo"] = p
 	var v := _vbox(p, 12)
-	_header(v, "Offline Practice")
+	_header(v, "Offline Practice", "Pick a hero, then walk through the Outpost portal to face the dragon")
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	v.add_child(grid)
 	for cid in GameData.CLASS_ORDER:
-		grid.add_child(_class_card(cid))
+		grid.add_child(_class_card(cid, func(): solo_start.emit(cid, auto_check.button_pressed)))
 	auto_check = CheckBox.new()
 	auto_check.text = "Autopilot — let a bot play your class too"
 	auto_check.focus_mode = Control.FOCUS_NONE
@@ -341,7 +364,7 @@ func _build_solo() -> void:
 	v.add_child(_centered(_button("Back", func(): show_screen("realm"), 200)))
 
 
-func _class_card(cid: String) -> Button:
+func _class_card(cid: String, on_pick: Callable) -> Button:
 	var c: Dictionary = GameData.CLASSES[cid]
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(400, 110)
@@ -349,7 +372,7 @@ func _class_card(cid: String) -> Button:
 	b.add_theme_stylebox_override("normal", UITheme.slot())
 	b.add_theme_stylebox_override("hover", UITheme.slot(Color(0.85, 0.7, 0.35)))
 	b.add_theme_stylebox_override("pressed", UITheme.slot(Color(1, 0.9, 0.6)))
-	b.pressed.connect(func(): solo_start.emit(cid, auto_check.button_pressed))
+	b.pressed.connect(on_pick)
 	var h := HBoxContainer.new()
 	h.set_anchors_preset(Control.PRESET_FULL_RECT)
 	h.offset_left = 12
@@ -383,68 +406,210 @@ func _icon(cid: String, size: float) -> TextureRect:
 	return icon
 
 
-# ------------------------------------------------------------------ lobby
+# ------------------------------------------------------------------ choose your hero (online)
 
-func _build_lobby() -> void:
-	var p := _center_panel(1180, 680)
-	screens["lobby"] = p
-	var v := _vbox(p, 8)
-	var t := UITheme.title("War Party", 34)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	lobby_info = _text("", 15, UITheme.GOLD_DIM)
-	lobby_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(lobby_info)
-	v.add_child(UITheme.divider())
+func _build_hero() -> void:
+	var p := _center_panel(860, 470)
+	screens["hero"] = p
+	var v := _vbox(p, 12)
+	_header(v, "Choose Your Hero", "The hero you walk the Outpost as and take into the raid")
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	v.add_child(grid)
+	for cid in GameData.CLASS_ORDER:
+		grid.add_child(_class_card(cid, func(): hero_chosen.emit(cid)))
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 16)
-	h.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	h.alignment = BoxContainer.ALIGNMENT_CENTER
+	h.add_theme_constant_override("separation", 12)
+	hero_back = _button("Back to Outpost", func(): hub_requested.emit(), 220)
+	h.add_child(hero_back)
+	h.add_child(_button("Log Out", func(): logout_requested.emit(), 160))
 	v.add_child(h)
-	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(700, 0)
-	h.add_child(left)
-	slot_box = VBoxContainer.new()
-	slot_box.add_theme_constant_override("separation", 8)
-	left.add_child(slot_box)
-	comp_label = _text("", 16, UITheme.GOLD)
-	left.add_child(comp_label)
-	var chat := PanelContainer.new()
-	chat.add_theme_stylebox_override("panel", UITheme.slot())
-	chat.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(chat)
-	var cv := VBoxContainer.new()
-	chat.add_child(cv)
-	cv.add_child(UITheme.title("Realm Chat", 16, UITheme.GOLD_DIM))
-	chat_log = RichTextLabel.new()
-	chat_log.bbcode_enabled = true
-	chat_log.scroll_following = true
-	chat_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	chat_log.add_theme_font_size_override("normal_font_size", 16)
-	cv.add_child(chat_log)
-	chat_edit = LineEdit.new()
-	chat_edit.placeholder_text = "Say something..."
-	chat_edit.text_submitted.connect(func(txt: String):
-		if txt.strip_edges() != "":
-			Net.request("chat", [txt])
-		chat_edit.text = "")
-	cv.add_child(chat_edit)
-	var bh := HBoxContainer.new()
-	bh.alignment = BoxContainer.ALIGNMENT_CENTER
-	bh.add_theme_constant_override("separation", 16)
-	v.add_child(bh)
-	who_label = _text("", 15, UITheme.GOLD_DIM, false)
-	bh.add_child(who_label)
-	lobby_latency = _text("", 15, UITheme.TEXT, false)
-	lobby_latency.add_theme_font_override("font", UITheme.title_font())
-	lobby_latency.tooltip_text = "Latency to the realm (round trip)"
-	lobby_latency.mouse_filter = Control.MOUSE_FILTER_PASS
-	bh.add_child(lobby_latency)
-	start_btn = _button("Start Raid", func(): Net.request("start"), 240)
-	bh.add_child(start_btn)
-	rejoin_btn = _button("Rejoin Raid", func(): rejoin_requested.emit(), 220)
-	rejoin_btn.visible = false
-	bh.add_child(rejoin_btn)
-	bh.add_child(_button("Log Out", func(): logout_requested.emit(), 180))
+
+
+# ------------------------------------------------------------------ war party window (online)
+
+func _build_party() -> void:
+	var p := _center_panel(1000, 640)
+	screens["party"] = p
+	var v := _vbox(p, 8)
+	party_title = UITheme.title("War Parties", 34)
+	party_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(party_title)
+	party_info = _text("", 15, UITheme.GOLD_DIM)
+	party_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(party_info)
+	v.add_child(UITheme.divider())
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	party_body = VBoxContainer.new()
+	party_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	party_body.add_theme_constant_override("separation", 8)
+	scroll.add_child(party_body)
+	v.add_child(UITheme.divider())
+	party_foot = HBoxContainer.new()
+	party_foot.alignment = BoxContainer.ALIGNMENT_CENTER
+	party_foot.add_theme_constant_override("separation", 14)
+	v.add_child(party_foot)
+	party_latency = _text("", 15, UITheme.TEXT, false)
+	party_latency.add_theme_font_override("font", UITheme.title_font())
+	party_latency.tooltip_text = "Latency to the realm (round trip)"
+	party_latency.mouse_filter = Control.MOUSE_FILTER_PASS
+	party_latency.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(party_latency)
+
+
+## A framed row: class icon, a title and a sub line, then whatever buttons go on the right.
+func _row(cid: String, title: String, title_c: Color, sub: String, sub_c: Color, mine := false) -> HBoxContainer:
+	var row := PanelContainer.new()
+	row.add_theme_stylebox_override("panel", UITheme.slot(Color(0.85, 0.7, 0.35) if mine else Color(0, 0, 0, 0)))
+	party_body.add_child(row)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	row.add_child(h)
+	h.add_child(_icon(cid, 52))
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(info)
+	info.add_child(UITheme.title(title, 18, title_c))
+	info.add_child(_text(sub, 15, sub_c, false))
+	return h
+
+
+func _refresh_party() -> void:
+	if party_body == null:
+		return
+	for c in party_body.get_children():
+		c.queue_free()
+	for c in party_foot.get_children():
+		c.queue_free()
+	if Net.in_party():
+		_show_my_party()
+	else:
+		_show_party_list()
+	party_foot.add_child(_button("Change Hero", func(): show_screen("hero"), 180))
+	party_foot.add_child(_button("Back to Outpost", func(): hub_requested.emit(), 200))
+	party_foot.add_child(_button("Log Out", func(): logout_requested.emit(), 140))
+	if visible and screens.has("rejoin") and screens["rejoin"].visible and not Net.can_rejoin() \
+			and (Net.main == null or Net.main.world == null):
+		# Still on the rejoin screen but the raid ended meanwhile
+		if _in_hub():
+			hub_requested.emit()
+		else:
+			show_screen("hero")
+
+
+func _show_party_list() -> void:
+	party_title.text = "War Parties"
+	party_info.text = "Join a war party, or form your own and lead it against Vyrathax."
+	var list: Array = Net.lobby.get("parties", [])
+	if list.is_empty():
+		var l := _text("No war parties yet — be the first to form one.", 17, UITheme.GOLD_DIM)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		party_body.add_child(l)
+	for e in list:
+		var pid := int(e[0])
+		var classes: Array = e[5]
+		var names: Array = []
+		for cid in classes:
+			names.append(GameData.CLASSES[cid]["name"] if GameData.CLASSES.has(cid) else "?")
+		var in_raid: bool = e[4]
+		var sub := "%d %s  ·  %s" % [int(e[2]), "player" if int(e[2]) == 1 else "players", ", ".join(names) if not names.is_empty() else "no heroes yet"]
+		var lead_cid: String = classes[0] if not classes.is_empty() else ""
+		var h := _row(lead_cid, "%s's party   %d / %d" % [e[1], int(e[3]), Net.PARTY_SIZE], UITheme.GOLD, sub, UITheme.TEXT)
+		if in_raid:
+			h.add_child(_text("In battle", 16, Color(1, 0.55, 0.4), false))
+		elif int(e[3]) >= Net.PARTY_SIZE and int(e[2]) >= Net.PARTY_SIZE:
+			h.add_child(_text("Full", 16, UITheme.GOLD_DIM, false))
+		else:
+			h.add_child(_button("Join", func(): Net.request("join_party", [pid]), 120))
+	party_foot.add_child(_button("Create Party", func(): Net.request("create_party"), 220))
+
+
+func _show_my_party() -> void:
+	var party := Net.my_party()
+	var slots: Array = party["slots"]
+	var leader := int(party["leader"])
+	var me := Net.my_id()
+	var i_lead := Net.is_leader()
+	var in_raid: bool = party["in_raid"]
+	party_title.text = "%s's War Party" % Net.peer_name(leader)
+	var roles := {"tank": 0, "healer": 0, "melee": 0, "ranged": 0}
+	for i in slots.size():
+		var s: Dictionary = slots[i]
+		var peer := int(s["peer"])
+		var cid: String = s["class"]
+		var filled: bool = peer != 0 or s["bot"]
+		if filled and cid != "":
+			roles[GameData.CLASSES[cid]["role"]] += 1
+		var title := "Seat %d — open" % (i + 1)
+		var tc := UITheme.GOLD_DIM
+		if filled and cid != "":
+			title = "%s  ·  %s" % [GameData.CLASSES[cid]["name"], ROLE_NAMES[GameData.CLASSES[cid]["role"]]]
+			tc = GameData.CLASSES[cid]["color"]
+		var who := ""
+		var who_c := UITheme.TEXT
+		if peer != 0:
+			who = Net.peer_name(peer)
+			if peer == leader:
+				who += "  ♛ leader"
+			if peer == me:
+				who += "  — you"
+			who_c = Color(1, 0.95, 0.8)
+		elif s["bot"]:
+			who = "Bot" if String(s.get("away", "")) == "" else "Bot covering for %s" % s["away"]
+			who_c = Color(0.65, 0.8, 1)
+		else:
+			who = "Empty — a bot fills it when the raid starts"
+			who_c = Color(0.6, 0.58, 0.52)
+		var h := _row(cid if filled else "", title, tc, who, who_c, peer == me)
+		if in_raid or not i_lead or peer != 0:
+			continue
+		if s["bot"]:
+			h.add_child(_bot_picker(i, cid))
+			h.add_child(_button("Remove", func(): Net.request("set_bot", [i, false]), 110))
+		else:
+			h.add_child(_button("Add Bot", func(): Net.request("set_bot", [i, true]), 120))
+	var parts: Array = ["Tanks %d" % roles["tank"], "Healers %d" % roles["healer"],
+		"Damage %d" % (roles["melee"] + roles["ranged"])]
+	var warn := ""
+	if roles["tank"] == 0:
+		warn += "   No tank — a bot tank will fill an empty seat."
+	if roles["healer"] == 0:
+		warn += "   No healer — a bot healer will fill an empty seat."
+	var comp := _text("Party: " + "  ·  ".join(parts) + warn, 16, UITheme.GOLD)
+	party_body.add_child(comp)
+	if Net.can_rejoin():
+		party_info.text = "Your party still fights — a bot is playing your hero. Rejoin to take it back."
+		party_foot.add_child(_button("Rejoin Raid", func(): rejoin_requested.emit(), 220))
+	elif in_raid:
+		party_info.text = "Your party is fighting Vyrathax."
+	elif i_lead:
+		party_info.text = "You lead this party. Add bots if you like, then start the raid when everyone is ready."
+		party_foot.add_child(_button("Start Raid", func(): Net.request("start"), 200))
+	else:
+		party_info.text = "Waiting for %s to start the raid. Use Change Hero to switch your class." % Net.peer_name(leader)
+	if not in_raid or Net.can_rejoin():
+		party_foot.add_child(_button("Leave Party", func(): Net.request("leave_party"), 170))
+
+
+func _bot_picker(slot: int, current: String) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.custom_minimum_size = Vector2(190, 40)
+	ob.add_theme_font_override("font", UITheme.title_font())
+	ob.add_theme_font_size_override("font_size", 14)
+	for i in GameData.CLASS_ORDER.size():
+		var cid: String = GameData.CLASS_ORDER[i]
+		ob.add_item("%s  (%s)" % [GameData.CLASSES[cid]["name"], ROLE_NAMES[GameData.CLASSES[cid]["role"]]], i)
+		if cid == current:
+			ob.select(i)
+	ob.item_selected.connect(func(idx: int): Net.request("set_bot_class", [slot, GameData.CLASS_ORDER[idx]]))
+	return ob
 
 
 # ------------------------------------------------------------------ rejoin
@@ -478,10 +643,11 @@ func _build_rejoin() -> void:
 	var bh := HBoxContainer.new()
 	bh.alignment = BoxContainer.ALIGNMENT_CENTER
 	bh.add_theme_constant_override("separation", 12)
-	bh.add_child(_button("Go to Lobby", func(): show_screen("lobby"), 200))
+	rejoin_hub_btn = _button("Go to the Outpost", func(): hub_requested.emit(), 240)
+	bh.add_child(rejoin_hub_btn)
 	bh.add_child(_button("Log Out", func(): logout_requested.emit(), 160))
 	v.add_child(bh)
-	var hint := _text("You can also rejoin later from the lobby while the raid lasts.", 14, UITheme.GOLD_DIM)
+	var hint := _text("You can also rejoin later through the Outpost portal while the raid lasts.", 14, UITheme.GOLD_DIM)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hint)
 
@@ -507,130 +673,12 @@ func show_rejoin(info: Dictionary) -> void:
 		int(info.get("alive", 0)), int(info.get("party", 5))]
 
 
-func _class_picker(slot: int, current: String, enabled: bool) -> OptionButton:
-	var ob := OptionButton.new()
-	ob.focus_mode = Control.FOCUS_NONE
-	ob.custom_minimum_size = Vector2(190, 40)
-	ob.add_theme_font_override("font", UITheme.title_font())
-	ob.add_theme_font_size_override("font_size", 14)
-	for i in GameData.CLASS_ORDER.size():
-		var cid: String = GameData.CLASS_ORDER[i]
-		ob.add_item("%s  (%s)" % [GameData.CLASSES[cid]["name"], ROLE_NAMES[GameData.CLASSES[cid]["role"]]], i)
-		if cid == current:
-			ob.select(i)
-	ob.disabled = not enabled
-	ob.item_selected.connect(func(idx: int): Net.request("set_class", [slot, GameData.CLASS_ORDER[idx]]))
-	return ob
-
-
-func _refresh_lobby() -> void:
-	if slot_box == null:
-		return
-	for c in slot_box.get_children():
-		c.queue_free()
-	var slots: Array = Net.lobby.get("slots", [])
-	var names: Dictionary = Net.lobby.get("names", {})
-	var leader := int(Net.lobby.get("leader", 0))
-	var me := Net.my_id()
-	var i_lead := Net.is_leader()
-	var my_slot := Net.my_slot()
-	var in_raid: bool = Net.lobby.get("in_raid", false)
-	var roles := {"tank": 0, "healer": 0, "melee": 0, "ranged": 0}
-	for i in slots.size():
-		var s: Dictionary = slots[i]
-		var peer := int(s["peer"])
-		var cid: String = s["class"]
-		var filled: bool = peer != 0 or s["bot"]
-		if filled and cid != "":
-			roles[GameData.CLASSES[cid]["role"]] += 1
-		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", UITheme.slot(Color(0.85, 0.7, 0.35) if peer == me else Color(0, 0, 0, 0)))
-		slot_box.add_child(row)
-		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 12)
-		row.add_child(h)
-		h.add_child(_icon(cid if filled else "", 52))
-		var info := VBoxContainer.new()
-		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		h.add_child(info)
-		var title := "Slot %d — open" % (i + 1)
-		var tc := UITheme.GOLD_DIM
-		if filled and cid != "":
-			title = "%s  ·  %s" % [GameData.CLASSES[cid]["name"], ROLE_NAMES[GameData.CLASSES[cid]["role"]]]
-			tc = GameData.CLASSES[cid]["color"]
-		info.add_child(UITheme.title(title, 18, tc))
-		var who := ""
-		var who_c := UITheme.TEXT
-		if peer != 0:
-			who = String(names.get(peer, "Adventurer"))
-			if peer == leader:
-				who += "  ♛ leader"
-			if peer == me:
-				who += "  — you"
-			who_c = Color(1, 0.95, 0.8)
-		elif s["bot"]:
-			who = "Bot"
-			who_c = Color(0.65, 0.8, 1)
-		else:
-			who = "Empty — a bot fills it when the raid starts"
-			who_c = Color(0.6, 0.58, 0.52)
-		info.add_child(_text(who, 16, who_c, false))
-		if in_raid:
-			continue
-		if peer == me:
-			h.add_child(_class_picker(i, cid, true))
-			h.add_child(_button("Leave", func(): Net.request("leave_slot"), 100))
-		elif peer == 0 and s["bot"]:
-			h.add_child(_class_picker(i, cid, i_lead))
-			if i_lead:
-				h.add_child(_button("Remove", func(): Net.request("set_bot", [i, false]), 110))
-		elif peer == 0:
-			if my_slot != i:
-				h.add_child(_button("Join", func(): Net.request("take_slot", [i]), 100))
-			if i_lead:
-				h.add_child(_button("Add Bot", func(): Net.request("set_bot", [i, true]), 120))
-	var parts: Array = ["Tanks %d" % roles["tank"], "Healers %d" % roles["healer"],
-		"Damage %d" % (roles["melee"] + roles["ranged"])]
-	var warn := ""
-	if roles["tank"] == 0:
-		warn += "   No tank chosen — a bot tank will fill an empty slot."
-	if roles["healer"] == 0:
-		warn += "   No healer chosen — a bot healer will fill an empty slot."
-	comp_label.text = "Party: " + "  ·  ".join(parts) + warn
-	var can_rejoin := Net.can_rejoin()
-	start_btn.visible = i_lead and not can_rejoin
-	start_btn.disabled = in_raid or my_slot < 0
-	rejoin_btn.visible = can_rejoin
-	who_label.text = "Logged in as %s" % Net.my_name if Net.my_name != "" else ""
-	# Still on the rejoin screen (menu showing, not in a fight) but the raid ended meanwhile: go to the lobby.
-	# After Rejoin the menu is hidden; the lobby update that follows must not bring it back over the fight.
-	if visible and screens.has("rejoin") and screens["rejoin"].visible and not can_rejoin \
-			and (Net.main == null or Net.main.world == null):
-		show_screen("lobby", "")
-		return
-	if can_rejoin:
-		lobby_info.text = "Your raid is still going — a bot is playing your hero. Press Rejoin Raid to take it back."
-	elif in_raid:
-		lobby_info.text = "A raid is in progress on this realm — you will be able to join the next one."
-	elif i_lead:
-		lobby_info.text = "Realm %s  ·  You lead the party: take a slot, pick any class, add bots, then start." % Net.realm_address
-	else:
-		lobby_info.text = "Realm %s  ·  Take a slot and pick any class. The leader starts the raid." % Net.realm_address
-
-
 func _process(delta: float) -> void:
-	if not visible or not screens["lobby"].visible:
+	if not visible or not screens["party"].visible:
 		return
 	_lat_t -= delta
 	if _lat_t <= 0.0:
 		_lat_t = 0.5
 		var lt: Array = Net.latency_text()
-		lobby_latency.text = lt[0]
-		lobby_latency.add_theme_color_override("font_color", lt[1])
-
-
-func _on_chat(from: String, text: String, c: Color) -> void:
-	if from == "":
-		chat_log.append_text("[color=#%s][i]%s[/i][/color]\n" % [c.to_html(false), text])
-	else:
-		chat_log.append_text("[color=#e8c27a][%s][/color] [color=#%s]%s[/color]\n" % [from, c.to_html(false), text])
+		party_latency.text = lt[0]
+		party_latency.add_theme_color_override("font_color", lt[1])

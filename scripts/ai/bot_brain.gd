@@ -311,9 +311,13 @@ func _act_tank() -> void:
 		var c := _enemy_cluster(loose[0], 10.0)
 		if _in_reach(c, "thunder_leap") and _try_ground("thunder_leap", c):
 			return
-	# Taunt only if the enemy is loose on a non-tank (two tanks don't fight over aggro)
-	if t.target != unit and (t.target == null or t.target.role != GameData.ROLE_TANK):
-		_try("challenging_shout", t)
+	# Keep the taunt lock going: re-taunt when it is about to run out or the enemy is loose
+	# (but don't steal it from another tank who holds it). The dragon comes first, whatever we target.
+	if boss.alive and not boss.untargetable and world.combat_active and _needs_taunt(boss) \
+			and _try("challenging_shout", boss):
+		pass
+	elif t != boss and _needs_taunt(t) and not _boss_lands_soon(boss):
+		_try("challenging_shout", t)  # saved for the dragon when it is about to land
 	var breath_on_me: bool = boss.is_casting() and boss.casting["name"] == "Flame Breath" and boss.target == unit
 	if breath_on_me or (world.combat_active and unit.hp_pct() < 0.8 and unit.resource >= 40.0):
 		_try("raise_shield")
@@ -325,6 +329,23 @@ func _act_tank() -> void:
 	# Thunder Leap on the boss for extra threat when everything else is on cooldown
 	if t == boss and unit.resource >= 0.0 and unit.distance_to_unit(boss) <= GameData.MELEE_RANGE:
 		_try_ground("thunder_leap", unit.flat_pos())
+
+
+## The dragon is in the air and lands before Challenging Shout would come off cooldown.
+func _boss_lands_soon(boss: Unit) -> bool:
+	if not boss.untargetable or not boss.alive:
+		return false
+	var left: float = float(GameData.BOSS["air_duration"]) - float(world.boss_air_time())
+	return left <= float(GameData.ABILITIES["challenging_shout"]["cd"]) + 1.0
+
+
+## A tank should taunt this enemy: nobody's taunt holds it for long enough (another tank's is fine).
+func _needs_taunt(e: Unit) -> bool:
+	if not e.is_taunted():
+		return true
+	if e.forced_target == unit:
+		return e.forced_target_time <= 4.0
+	return e.forced_target.role != GameData.ROLE_TANK
 
 
 func _act_healer(moving: bool) -> void:

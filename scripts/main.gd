@@ -1,10 +1,12 @@
 extends Node3D
-## Entry point: menus, solo raids, party hosting/joining and the dedicated server.
+## Entry point: menus, the Outpost, solo raids, online raids and the dedicated server.
 ##
 ## Dedicated server (no window):  godot --headless --path . -- --server [--port=24565]
 ## Headless balance test:         godot --headless --path . -- --sim --class=arcanist --runs=5
 
-var world: RaidWorld
+var world: RaidWorld  # the raid this client plays (or offline practice)
+var raids: Array = []  # dedicated server: one RaidWorld per war party in battle
+var hub: HubWorld  # the Outpost: walked before a raid (online: shared with everyone on the realm)
 var controller: PlayerController
 var hud: RaidHUD
 var menu: MenuUI
@@ -34,27 +36,90 @@ func _ready() -> void:
 	hud.retry_requested.connect(_on_retry)
 	hud.menu_requested.connect(_back_to_menu)
 	hud.lobby_requested.connect(func(): Net.request("to_lobby"))
-	hud.leave_requested.connect(_leave_party)
+	hud.leave_requested.connect(func(): Net.request("leave_party"))
 	hud.surrender_requested.connect(_on_surrender)
 	hud.quit_requested.connect(_quit_game)
 	menu = MenuUI.new()
 	add_child(menu)
-	menu.solo_start.connect(_start_solo)
+	menu.solo_start.connect(_enter_hub)
 	menu.connect_requested.connect(_connect_realm)
 	menu.login_requested.connect(func(u: String, p: String): Net.login(u, p))
 	menu.register_requested.connect(func(u: String, p: String): Net.register_account(u, p))
-	menu.logout_requested.connect(_leave_party)
+	menu.logout_requested.connect(_logout)
 	menu.quit_requested.connect(_quit_game)
 	menu.rejoin_requested.connect(func(): Net.request("rejoin"))
+	menu.hub_requested.connect(_close_overlay)
+	menu.hero_chosen.connect(_choose_hero)
 	Net.connected.connect(func(): menu.show_screen("auth"))
 	Net.auth_result.connect(_on_auth)
 	Net.rejoin_offered.connect(func(info: Dictionary):
 		if world == null:
 			menu.show_rejoin(info))
+	Net.lobby_changed.connect(_on_lobby_changed)
 	_dev_flags()
 
 
 # ------------------------------------------------------------------ modes
+
+## Offline: picking a hero drops you in the Outpost; walking through its portal starts the raid.
+func _enter_hub(class_id: String, autoplay: bool) -> void:
+	if Net.is_net():
+		Net.leave()
+	last_class = class_id
+	last_auto = autoplay
+	_clear_fight()
+	if preview:
+		preview.visible = false
+	hub = HubWorld.new()
+	add_child(hub)
+	hub.setup(class_id)
+	hub.portal_entered.connect(func(): _start_solo(last_class, last_auto))
+	hub.leave_requested.connect(_back_to_menu)
+	menu.hide_all()
+
+
+## Online: logged-in players (and parties back from a raid) walk the realm's shared Outpost.
+func _enter_online_hub() -> void:
+	_clear_fight()
+	if preview:
+		preview.visible = false
+	var cid := Net.avatar_class(Net.my_id())
+	if cid == "":
+		cid = String(menu.cfg_value("hero", "warden"))
+	hub = HubWorld.new()
+	add_child(hub)
+	hub.setup(cid, true, Net.my_name)
+	hub.portal_entered.connect(func(): menu.show_screen("party"))
+	hub.leave_requested.connect(func(): menu.show_screen("party"))
+	menu.hide_all()
+	_hub_dev()
+
+
+## Picked on the Choose Your Hero screen: after logging in, or "Change Hero" in the Outpost.
+func _choose_hero(cid: String) -> void:
+	menu.remember("hero", cid)
+	Net.request("set_hero", [cid])
+	if hub == null:
+		_enter_online_hub()
+	hub.set_player_class(cid)
+	menu.hide_all()
+
+
+## Closing the War Party window (or the rejoin / hero screens) goes back to walking the Outpost.
+func _close_overlay() -> void:
+	if hub != null:
+		menu.hide_all()
+	elif Net.logged_in:
+		menu.show_screen("hero")
+
+
+func _on_lobby_changed() -> void:
+	if hub == null or not hub.online:
+		return
+	var cid := Net.avatar_class(Net.my_id())
+	if cid != "" and cid != String(menu.cfg_value("hero", "")):
+		menu.remember("hero", cid)
+
 
 func _start_solo(class_id: String, autoplay: bool) -> void:
 	if Net.is_net():
@@ -82,17 +147,48 @@ func _make_world(role: String, roster: Array, local_peer: int, autoplay: bool) -
 	menu.hide_all()
 
 
-## Called by Net on the host / dedicated server when the leader starts (or retries) the raid.
-func server_start_raid(roster: Array) -> void:
-	_make_world("server", roster, 0 if dedicated else Net.my_id(), false)
-	if dedicated:
-		print("Raid started with %d players." % roster.filter(func(r): return int(r["peer"]) != 0).size())
+## Dedicated server: a war party's leader starts (or retries) its raid. Each party gets its own world.
+func server_start_raid(party_id: int, roster: Array) -> RaidWorld:
+	var w := RaidWorld.new()
+	w.net_role = "server"
+	w.visuals = false
+	w.party_id = party_id
+	add_child(w)
+	w.setup_roster(roster, 0, false)
+	raids.append(w)
+	print("[realm] raid for party %d: %d players, %d raids running" % [party_id,
+		roster.filter(func(r): return int(r["peer"]) != 0).size(), raids.size()])
+	return w
+
+
+func server_end_raid(w: RaidWorld) -> void:
+	raids.erase(w)
+	w.queue_free()
+
+
+var _last_realm_log := ""
+
+
+## Dedicated server: one line whenever the realm's parties change.
+func log_realm(players: Dictionary, parties: Dictionary) -> void:
+	var line: Array = []
+	for pid in parties:
+		var party: Dictionary = parties[pid]
+		var seats: Array = []
+		for sl in party["slots"]:
+			var p := int(sl["peer"])
+			seats.append("%s=%s" % [sl["class"], players[p]["name"] if players.has(p) else ("bot" if sl["bot"] else "-")])
+		line.append("#%d%s[%s]" % [pid, " (raid)" if party["in_raid"] else "", ", ".join(seats)])
+	var text := "%d online · %s" % [players.size(), "  ".join(line) if not line.is_empty() else "no parties"]
+	if text != _last_realm_log:
+		_last_realm_log = text
+		print("[realm] ", text)
 
 
 func _client_raid_started(roster: Array) -> void:
 	var mine := roster.filter(func(r): return int(r["peer"]) == Net.my_id())
 	if mine.is_empty():
-		return  # not in this raid; stay in the lobby
+		return  # not in this raid
 	_make_world("client", roster, Net.my_id(), false)
 
 
@@ -100,27 +196,28 @@ func return_to_lobby() -> void:
 	_clear_fight()
 	if dedicated:
 		return
-	_show_menu_scene()
-	menu.show_screen("lobby")
-
-
-func world_peer_left(peer: int) -> void:
-	if world == null:
+	if Net.is_net() and Net.logged_in:
+		_enter_online_hub()
 		return
-	var u := world.unit_of_peer(peer)
+	_show_menu_scene()
+	menu.show_screen("realm")
+
+
+func world_peer_left(w: RaidWorld, peer: int) -> void:
+	var u := w.unit_of_peer(peer)
 	if u != null:
 		u.owner_peer = 0
 		u.set_meta("player_name", u.unit_name)
 		u.unit_name += " (bot)"
 		if u.nameplate:
 			u.nameplate.text = u.unit_name
-		u.brain = BotBrain.new(u, world, float(u.get_meta("side", 1.0)))
+		u.brain = BotBrain.new(u, w, float(u.get_meta("side", 1.0)))
 
 
 ## Server: a player who dropped out takes their hero back from the bot. Returns the roster the
 ## client needs to rebuild the raid (snapshots then fill in positions, health and auras).
-func world_peer_rejoined(peer: int, slot: int, player_name: String) -> Array:
-	var u := world.unit_by_id(slot)
+func world_peer_rejoined(w: RaidWorld, peer: int, slot: int, player_name: String) -> Array:
+	var u := w.unit_by_id(slot)
 	if u != null:
 		u.owner_peer = peer
 		u.brain = null
@@ -128,7 +225,7 @@ func world_peer_rejoined(peer: int, slot: int, player_name: String) -> Array:
 		if u.nameplate:
 			u.nameplate.text = u.unit_name
 	var roster: Array = []
-	for p in world.party_all():
+	for p in w.party_all():
 		roster.append({"class": p.class_id, "peer": p.owner_peer, "name": p.unit_name})
 	return roster
 
@@ -143,12 +240,14 @@ func _on_auth(ok: bool, message: String) -> void:
 	if dedicated:
 		return
 	if ok:
-		menu.show_screen("lobby")  # the realm follows up with a rejoin offer if a raid is waiting for us
+		# Choose a hero, then walk into the Outpost. If our party's raid is still running the realm
+		# follows up with a rejoin offer, which replaces this screen.
+		menu.show_screen("hero")
 	else:
 		menu.auth_failed(message)
 
 
-func _leave_party() -> void:
+func _logout() -> void:
 	Net.leave()
 	_clear_fight()
 	_show_menu_scene()
@@ -200,6 +299,9 @@ func _show_menu_scene() -> void:
 
 
 func _clear_fight() -> void:
+	if hub:
+		hub.queue_free()
+		hub = null
 	if controller:
 		controller.queue_free()
 		controller = null
@@ -215,7 +317,7 @@ func _start_dedicated() -> void:
 	dedicated = true
 	Engine.max_fps = 60
 	var port := int(_args.get("port", str(Net.DEFAULT_PORT)))
-	var err := Net.host(port, "Server", true)
+	var err := Net.host(port)
 	if err != "":
 		printerr(err)
 		get_tree().quit(1)
@@ -223,12 +325,6 @@ func _start_dedicated() -> void:
 	print("Emberfall dedicated server listening on port %d" % port)
 	print("LAN addresses: ", ", ".join(Net.local_addresses()))
 	Net.chat_received.connect(func(f: String, t: String, _c: Color): print("[chat] %s: %s" % [f, t]))
-	Net.lobby_changed.connect(func():
-		var parts: Array = []
-		for s in Net.lobby["slots"]:
-			var p := int(s["peer"])
-			parts.append("%s=%s" % [s["class"], Net.lobby["names"].get(p, "bot" if s["bot"] else "-") if p != 0 else ("bot" if s["bot"] else "-")])
-		print("[lobby] ", ", ".join(parts), "  leader=", Net.lobby["leader"], " in_raid=", Net.lobby["in_raid"]))
 
 
 # ------------------------------------------------------------------ loop
@@ -240,8 +336,12 @@ var _debug_t := 0.0
 
 
 func _process(delta: float) -> void:
+	if hub != null:
+		hub.ui_blocked = menu.visible
 	if world != null and not (hud != null and hud.menu_open and not Net.is_net()):
 		world.tick(minf(delta, 0.1))  # the Esc menu pauses offline practice
+	for w in raids:
+		w.tick(minf(delta, 0.1))
 	_clock += delta
 	if _args.has("netdebug") and world != null:
 		_debug_t -= delta
@@ -258,39 +358,59 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 
-## Dev flags: --autostart=<class> [--autoplay] [--zoom=6] [--fxtest=<skill>] [--speed=4]
-## [--screenshot=<file> --shot-at=<sec>] [--autojoin=<ip>] [--autohost] [--menu=<screen>] [--netdebug] [--quit-at=<sec>]
+## Dev flags: --hub=<class> [--hubwalk] | --autostart=<class> [--autoplay] [--zoom=6] [--fxtest=<skill>] [--speed=4]
+## [--screenshot=<file> --shot-at=<sec>] [--autojoin=<ip> ...] [--menu=<screen>] [--netdebug] [--quit-at=<sec>]
+## Dev: --hubwalk[=<delay>] walks the hero up the road and through the portal; --hubcircle walks laps.
+func _hub_dev() -> void:
+	if hub == null:
+		return
+	if _args.has("hubwalk"):
+		var delay := float(_args["hubwalk"]) if _args["hubwalk"] != "true" else 1.0
+		hub.create_tween().tween_property(hub.player, "position", Vector3(0, 0, -0.8), 3.0).set_delay(delay)
+	if _args.has("hubcircle"):
+		var h := hub
+		h.create_tween().tween_method(func(ang: float):
+			var p := Vector3(cos(ang) * 16.0, 0, sin(ang) * 16.0 + 4.0)
+			h.player.rotation.y = atan2(-(p.x - h.player.position.x), -(p.z - h.player.position.z))
+			h.player.position = p, 0.0, 0.35 * 120.0, 120.0)
+
+
 func _dev_flags() -> void:
 	var args := _args
 	if args.has("menu"):
 		menu.show_screen(args["menu"])
 	if args.has("autojoin"):
-		# Dev: --autojoin=<ip> --user=<name> --pass=<pw> [--register] [--slot=N] [--class=<id>] [--autoraid --minplayers=N]
+		# Dev: --autojoin=<ip> --user=<name> --pass=<pw> [--register] [--hero=<class>] [--nohero]
+		#   [--party=create|join] [--autoraid --minplayers=N] [--startdelay=<sec>]
 		_connect_realm(args["autojoin"], int(args.get("port", str(Net.DEFAULT_PORT))))
 		Net.connected.connect(func():
 			if args.has("register"):
 				Net.register_account(args.get("user", "Tester"), args.get("pass", "secret123"))
 			else:
 				Net.login(args.get("user", "Tester"), args.get("pass", "secret123")))
-		Net.auth_result.connect(func(ok: bool, msg: String): print("[auth] ", ok, " ", msg))
+		Net.auth_result.connect(func(ok: bool, msg: String):
+			print("[auth] ", ok, " ", msg)
+			if ok and not args.has("nohero"):
+				_choose_hero(String(args.get("hero", "warden"))))
 		Net.lobby_changed.connect(func():
-			if not Net.logged_in or Net.lobby.get("in_raid", false):
+			if not Net.logged_in or hub == null or not args.has("party"):
 				return
-			var slot := Net.my_slot()
-			if slot < 0:
-				var want := int(args.get("slot", "-1"))
-				for i in Net.lobby["slots"].size():
-					if int(Net.lobby["slots"][i]["peer"]) == 0 and (want < 0 or i == want):
-						Net.request("take_slot", [i])
-						break
-			elif args.has("class") and Net.lobby["slots"][slot]["class"] != args["class"]:
-				Net.request("set_class", [slot, args["class"]])
-			elif Net.is_leader() and args.has("autoraid"):
+			if not Net.in_party():
+				if has_meta("asked"):
+					return
+				if args["party"] == "create":
+					set_meta("asked", true)
+					Net.request("create_party")
+				elif args["party"] == "join" and not Net.lobby["parties"].is_empty():
+					set_meta("asked", true)
+					Net.request("join_party", [int(Net.lobby["parties"][0][0])])
+			elif Net.is_leader() and args.has("autoraid") and not args.has("startdelay") and not Net.my_party()["in_raid"]:
 				var n := 0
-				for sl in Net.lobby["slots"]:
+				for sl in Net.my_party()["slots"]:
 					if int(sl["peer"]) != 0:
 						n += 1
-				if n >= int(args.get("minplayers", "1")) and not args.has("startdelay"):
+				if n >= int(args.get("minplayers", "1")) and not has_meta("started"):
+					set_meta("started", true)  # once: don't re-pull after the party comes back
 					Net.request("start"))
 		if args.has("startdelay"):
 			get_tree().create_timer(float(args["startdelay"])).timeout.connect(func(): Net.request("start"))
@@ -307,6 +427,9 @@ func _dev_flags() -> void:
 		get_tree().create_timer(float(args["autosurrender"])).timeout.connect(func():
 			print("[vote] calling surrender")
 			_on_surrender())
+	if args.has("hub"):
+		_enter_hub(args["hub"], false)
+		_hub_dev()
 	if args.has("autostart"):
 		_start_solo(args["autostart"], args.has("autoplay"))
 	if args.has("zoom") and controller:

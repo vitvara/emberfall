@@ -23,6 +23,7 @@ var player: Unit
 var visuals := true
 var arena_radius := 30.0
 var net_role := "offline"
+var party_id := 0  # realm: which war party fights in this world
 var instant_spells := false  # headless balance sim: no projectile travel time
 var by_id := {}
 var _next_id := 101
@@ -43,6 +44,8 @@ var phase_log: Array = []
 
 # Replicated boss state (client side)
 var _snap_phase := 0
+var _snap_ms := 0                       # client: arrival time of the last snapshot
+var _snap_dt := Net.SNAPSHOT_RATE       # client: measured (smoothed) time between snapshots
 var _snap_air := 0.0
 var _snap_count := 0
 var synced := false  # client: first snapshot applied (positions are trustworthy)
@@ -306,9 +309,14 @@ func client_tick(delta: float) -> void:
 	for u in units:
 		var local_free: bool = u == player and u.alive and not u.net_dashing
 		if not local_free:
-			var k := clampf(delta * 14.0, 0.0, 1.0)
-			u.position = u.position.lerp(u.net_pos, k)
-			u.rotation.y = lerp_angle(u.rotation.y, u.net_rot, k)
+			# Walk at a steady pace from where we were to the newest snapshot, arriving as the next
+			# one is due: no surge-and-settle between packets (one snapshot interval of delay).
+			u.net_lerp = minf(1.0, u.net_lerp + delta / _snap_dt)
+			if u.net_from.distance_to(u.net_pos) > 8.0:
+				u.position = u.net_pos
+			else:
+				u.position = u.net_from.lerp(u.net_pos, u.net_lerp)
+			u.rotation.y = lerp_angle(u.net_rot_from, u.net_rot, u.net_lerp)
 		if not u.casting.is_empty():
 			u.casting["remaining"] = maxf(0.0, float(u.casting["remaining"]) - delta)
 	if player != null:
@@ -336,7 +344,7 @@ func client_tick(delta: float) -> void:
 ## WARP (inner MTU ~1280) lose any datagram that has to be fragmented.
 ## Layout: [fight_time, started, countdown, combat_active, phase, air, units, meters|null, threat, mine|null]
 ##   units:  [[nums, cast, aura_ids, aura_vals], ...]   nums = SNAP_FIELDS order
-##   threat: PackedFloat32Array [id, value, id, value, ...]
+##   threat: PackedFloat32Array [taunter id or -1, taunt seconds left, id, damage dealt to the boss, ...]
 ##   mine:   per recipient (see own_state): [net_id, cooldowns, gcd_remaining, gcd_total]
 func make_snapshot() -> Array:
 	_snap_count += 1
@@ -359,10 +367,12 @@ func make_snapshot() -> Array:
 		meters = {}
 		for u in party_all():
 			meters[u.net_id] = [float(damage_done.get(u, 0.0)), float(healing_done.get(u, 0.0))]
-	var threat := PackedFloat32Array()
-	for u in boss.threat:
+	# Aggro on the boss: [taunter id (-1), taunt seconds left, then id, damage dealt, ...]
+	var threat := PackedFloat32Array([boss.forced_target.net_id if boss.is_taunted() else -1,
+		maxf(boss.forced_target_time, 0.0)])
+	for u in boss.damage_by:
 		if u.alive:
-			threat.append_array([u.net_id, float(boss.threat[u])])
+			threat.append_array([u.net_id, float(boss.damage_by[u])])
 	return [fight_time, started, countdown, combat_active, boss_phase(), boss_air_time(), us, meters, threat, null]
 
 
@@ -380,18 +390,27 @@ func apply_snapshot(s: Array) -> void:
 	_snap_air = s[5]
 	var first := not synced
 	synced = true
+	var now := Time.get_ticks_msec()
+	if _snap_ms > 0:
+		_snap_dt = lerpf(_snap_dt, clampf((now - _snap_ms) / 1000.0, 0.016, 0.25), 0.1)
+	_snap_ms = now
 	for row in s[6]:
 		var n: PackedFloat32Array = row[0]
 		var u := unit_by_id(int(n[0]))
 		if u == null:
 			continue
 		var flags := int(n[10])
+		u.net_from = u.position
+		u.net_rot_from = u.rotation.y
+		u.net_lerp = 0.0
 		u.net_pos = Vector3(n[1], n[2], n[3])
 		u.net_rot = n[4]
 		u.net_dashing = flags & 4 != 0
 		if first or (u == player and u.net_dashing):
 			u.position = u.net_pos  # joining (or rejoining) mid-fight: start where the realm says
 			u.rotation.y = u.net_rot
+			u.net_from = u.net_pos
+			u.net_rot_from = u.net_rot
 		u.hp = n[5]
 		u.max_hp = n[6]
 		u.resource = n[7]
@@ -428,12 +447,15 @@ func apply_snapshot(s: Array) -> void:
 			if u != null:
 				damage_done[u] = s[7][id][0]
 				healing_done[u] = s[7][id][1]
-	boss.threat.clear()
 	var th: PackedFloat32Array = s[8]
-	for i in range(0, th.size() - 1, 2):
+	if th.size() >= 2:
+		boss.forced_target = unit_by_id(int(th[0])) if th[0] >= 0.0 else null
+		boss.forced_target_time = th[1]
+	boss.damage_by.clear()
+	for i in range(2, th.size() - 1, 2):
 		var u := unit_by_id(int(th[i]))
 		if u != null:
-			boss.threat[u] = th[i + 1]
+			boss.damage_by[u] = th[i + 1]
 
 
 # ------------------------------------------------------------------ network events
@@ -464,7 +486,7 @@ func catchup_events() -> Array:
 
 func net_out(ev: String, args: Array) -> void:
 	if net_role == "server":
-		Net.send_fx(ev, args)
+		Net.send_fx(self, ev, args)
 
 
 ## Replays a server event on a client replica.

@@ -218,13 +218,13 @@ func _bubble(at: Vector3) -> void:
 	b.material_override = m
 	b.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	get_parent().add_child(b)
-	b.global_position = Vector3(at.x, 0.05, at.z)
+	b.position = Vector3(at.x, 0.05, at.z)  # map space (the Outpost sits off-origin)
 	var size := randf_range(0.15, 0.4)
 	b.scale = Vector3.ONE * 0.02
 	var tw := b.create_tween()
 	tw.tween_property(b, "scale", Vector3.ONE * size, randf_range(0.3, 0.6)).set_ease(Tween.EASE_OUT)
 	tw.tween_callback(func():
-		Vfx.burst(b.get_parent(), b.global_position, {"amount": 8, "lifetime": 0.4, "vmin": 1.0, "vmax": 2.5,
+		Vfx.burst(b.get_parent(), b.position, {"amount": 8, "lifetime": 0.4, "vmin": 1.0, "vmax": 2.5,
 			"direction": Vector3.UP, "spread": 60.0, "gravity": Vector3(0, -8, 0), "size": 0.12,
 			"colors": [Color(0.7, 1, 0.5, 1), Color(0.3, 0.8, 0.2, 0)]})
 		b.queue_free())

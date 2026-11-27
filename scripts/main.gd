@@ -379,16 +379,23 @@ func _hub_dev() -> void:
 		h.player.rotation.y = -PI / 2.0
 		h.controller.yaw = -PI / 2.0
 		h.controller.pitch = 0.35
-		h.controller.set_target(h.dummies[1]["unit"])
 		var t := Timer.new()
 		t.wait_time = 0.7
 		t.autostart = true
 		h.add_child(t)
 		var i := [0]
 		t.timeout.connect(func():
+			var dummy: Unit = h.dummies[1]["unit"]
+			var cam := h.controller.camera
+			var spot := cam.unproject_position(dummy.global_position + Vector3(0, 1.0, 0))
+			if h.player.target == null:
+				h.controller._pick(spot)  # the same path as a left-click on the dummy
+				print("[train] click at %s -> target %s" % [spot, h.player.target.unit_name if h.player.target else "none"])
 			h.controller.use_slot(i[0] % h.player.ability_ids.size())
 			if h.controller.ground_aid != "":
-				h.controller._cast_ground(h.dummies[1]["unit"].position)
+				var g: Vector3 = h.controller._mouse_ground(cam.unproject_position(dummy.global_position))
+				print("[train] ground aim %s, dummy at %s" % [g.snapped(Vector3.ONE * 0.1), dummy.position])
+				h.controller._cast_ground(g)
 			i[0] += 1)
 	if _args.has("hubcircle"):
 		var h := hub

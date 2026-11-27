@@ -234,13 +234,14 @@ func select(u: Unit) -> void:
 
 
 ## Mouse ray onto the ground, clamped to the pending skill's range.
-func _mouse_ground() -> Vector3:
-	var mp := get_viewport().get_mouse_position()
+func _mouse_ground(screen_pos = null) -> Vector3:
+	var mp: Vector2 = screen_pos if screen_pos is Vector2 else get_viewport().get_mouse_position()
 	var from := camera.project_ray_origin(mp)
 	var dir := camera.project_ray_normal(mp)
 	var p := unit.flat_pos()
 	if dir.y < -0.001:
-		p = from + dir * (-from.y / dir.y)
+		# The ray is in world space; skills work in the map's own space (the Outpost sits off-origin)
+		p = (world as Node3D).to_local(from + dir * (-from.y / dir.y))
 	p.y = 0.0
 	var ab: Dictionary = GameData.ABILITIES.get(ground_aid, {})
 	var rng: float = ab.get("range", 30.0)
@@ -292,7 +293,7 @@ func _pick(screen_pos: Vector2) -> void:
 	for u in world.units:
 		if not u.alive or u.untargetable:
 			continue
-		var p: Vector3 = u.position + Vector3(0, 3.0 if u.is_boss else 1.0, 0)
+		var p: Vector3 = u.global_position + Vector3(0, 3.0 if u.is_boss else 1.0, 0)  # world space for the camera
 		if camera.is_position_behind(p):
 			continue
 		var d := camera.unproject_position(p).distance_to(screen_pos)

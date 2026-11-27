@@ -23,7 +23,7 @@ var _ribbons: Array = []
 
 
 func _ready() -> void:
-	_start = global_position
+	_start = position  # map space, the same as the target's position (the Outpost sits off-origin)
 	if impact == "frost":
 		_build_frost()
 		_finish_ready()
@@ -124,10 +124,10 @@ func _process(delta: float) -> void:
 	var f := clampf(_t / _total, 0.0, 1.0)
 	var p := _start.lerp(_goal(), f)
 	p.y += sin(f * PI) * arc
-	var prev := global_position
-	global_position = p
+	var prev := position
+	position = p
 	if impact != "poison" and p.distance_to(prev) > 0.001:
-		look_at(p + (p - prev), Vector3.UP if absf((p - prev).normalized().y) < 0.95 else Vector3.RIGHT)
+		look_at(global_position + (p - prev), Vector3.UP if absf((p - prev).normalized().y) < 0.95 else Vector3.RIGHT)
 	elif impact == "poison":
 		_orb.rotation += Vector3(8.0, 5.0, 0) * get_process_delta_time()
 	if f >= 1.0:
@@ -141,25 +141,25 @@ func _hit() -> void:
 	var parent := get_parent()
 	match impact:
 		"meteor":
-			Vfx.explosion(parent, global_position, 6.0)
+			Vfx.explosion(parent, position, 6.0)
 		"holy":
-			Vfx.sparks(parent, global_position, color, 16)
-			Vfx.bubble_flash(parent, global_position, color, 0.9, 0.35)
+			Vfx.sparks(parent, position, color, 16)
+			Vfx.bubble_flash(parent, position, color, 0.9, 0.35)
 		"frost":
-			Vfx.ice_burst(parent, global_position, 1.0 if target == null or not target.is_boss else 1.4)
+			Vfx.ice_burst(parent, position, 1.0 if target == null or not target.is_boss else 1.4)
 		"poison":
-			Vfx.burst(parent, global_position, {"amount": 40, "lifetime": 0.7, "vmin": 2.0, "vmax": 6.0,
+			Vfx.burst(parent, position, {"amount": 40, "lifetime": 0.7, "vmin": 2.0, "vmax": 6.0,
 				"direction": Vector3.UP, "spread": 70.0, "gravity": Vector3(0, -10, 0), "size": 0.3,
 				"colors": [Color(0.7, 1, 0.5, 1), Color(0.35, 0.85, 0.25, 0.9), Color(0.2, 0.5, 0.1, 0)]})
-			Vfx.sparks(parent, global_position, Color(0.5, 1, 0.3), 12)
-			Vfx.burst(parent, global_position, {"amount": 10, "lifetime": 1.2, "vmin": 1.0, "vmax": 3.0, "size": 2.0,
+			Vfx.sparks(parent, position, Color(0.5, 1, 0.3), 12)
+			Vfx.burst(parent, position, {"amount": 10, "lifetime": 1.2, "vmin": 1.0, "vmax": 3.0, "size": 2.0,
 				"grow": true, "additive": false, "colors": [Color(0.35, 0.8, 0.25, 0.5), Color(0.2, 0.5, 0.1, 0)]})
 		"arcane":
-			Vfx.sparks(parent, global_position, color, 16)
-			Vfx.bubble_flash(parent, global_position, color, 1.0, 0.4)
+			Vfx.sparks(parent, position, color, 16)
+			Vfx.bubble_flash(parent, position, color, 1.0, 0.4)
 		_:
-			Vfx.fire_burst(parent, global_position, size * 3.0)
-			Vfx.flash_light(parent, global_position, color, 3.0, 6.0, 0.3)
+			Vfx.fire_burst(parent, position, size * 3.0)
+			Vfx.flash_light(parent, position, color, 3.0, 6.0, 0.3)
 	_orb.visible = false
 	_trail.emitting = false
 	for r in _ribbons:

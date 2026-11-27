@@ -562,6 +562,9 @@ static func _swoosh_mesh(span_deg: float, thickness: float) -> ArrayMesh:
 
 
 static func lightning(parent: Node, a: Vector3, b: Vector3, c: Color, dur := 0.4, w := 0.18) -> void:
+	if parent is Node3D and (parent as Node3D).is_inside_tree():
+		a = (parent as Node3D).to_global(a)  # the bolt is drawn in world space (the Outpost sits off-origin)
+		b = (parent as Node3D).to_global(b)
 	var l := LightningBolt.new().setup(a, b, c, dur, w)
 	parent.add_child(l)
 	sparks(parent, b, c, 14)

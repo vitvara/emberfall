@@ -22,6 +22,7 @@ var ground_aid := ""
 var blocked := false  # the Esc menu is open
 var reticle: MeshInstance3D
 var reticle_mat: StandardMaterial3D
+var _cine := 0.0  # 0..1: how much the camera looks toward the dragon while it flies in
 
 
 func setup(w, u: Unit, auto: bool) -> void:
@@ -89,6 +90,8 @@ func _process(delta: float) -> void:
 			reticle.scale = Vector3(r, 1, r)
 			reticle.rotation.y += delta * 1.2
 	_trauma = maxf(0.0, _trauma - _delta_guard(delta) * 1.6)
+	var arriving: bool = world is RaidWorld and world.boss != null and world.boss_phase() == 0
+	_cine = move_toward(_cine, 1.0 if arriving else 0.0, _delta_guard(delta) * 0.8)
 	_update_camera()
 	_update_ring()
 
@@ -101,7 +104,12 @@ func _update_camera() -> void:
 	var focus := unit.position + Vector3(0, 1.6, 0)
 	var off := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
 	camera.position = focus + off
-	camera.look_at(global_transform * focus, Vector3.UP)  # focus is local (the Outpost sits off-origin)
+	var look := global_transform * focus  # focus is local (the Outpost sits off-origin)
+	if _cine > 0.0:
+		# Vyrathax flying in: lean the view up toward him (eased), then hand it back for the fight
+		var e := _cine * _cine * (3.0 - 2.0 * _cine)
+		look = look.lerp(world.boss.global_position + Vector3(0, 3.0, 0), e * 0.6)
+	camera.look_at(look, Vector3.UP)
 	if _trauma > 0.0:
 		var s := _trauma * _trauma
 		camera.position += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.35 * s

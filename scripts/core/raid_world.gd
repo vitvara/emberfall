@@ -83,9 +83,10 @@ func setup_roster(roster: Array, local_peer: int, autoplay: bool) -> void:
 	boss.setup_mob(b["name"], b["hp"], b["armor"], b["radius"], Models.make_dragon(), 11.5, 4.5)
 	boss.is_boss = true
 	boss.net_id = 100
-	boss.position = Vector3.ZERO
-	boss.net_pos = Vector3.ZERO
-	boss.rotation.y = PI  # face the party (+Z)
+	boss.position = DragonBrain.ENTRY[0]  # far off in the ash clouds; flies in when the countdown ends
+	boss.net_pos = boss.position
+	boss.untargetable = true
+	boss.rotation.y = PI
 	if net_role != "client":
 		boss.brain = DragonBrain.new(boss, self)
 	_register(boss)
@@ -241,7 +242,7 @@ func tick(delta: float) -> void:
 		countdown -= delta
 		if countdown <= 0.0:
 			started = true
-			_say("Pull! Vyrathax awakens.", Color(1, 0.6, 0.2))
+			_say("Vyrathax comes for you!", Color(1, 0.6, 0.2))
 	if combat_active:
 		fight_time += delta
 	for u in units:
@@ -304,6 +305,8 @@ func client_tick(delta: float) -> void:
 	if player != null and player.alive and not player.is_dashing() and player.brain != null:
 		player.brain.tick(delta)
 	if player != null:
+		if player.grounded and player.position.y > 0.01 and not player.net_dashing:
+			player.grounded = false  # safety net: never hover while "standing" (gravity takes over)
 		player.tick_jump(delta)
 		player.moved_this_tick = false
 	for u in units:
@@ -405,12 +408,22 @@ func apply_snapshot(s: Array) -> void:
 		u.net_lerp = 0.0
 		u.net_pos = Vector3(n[1], n[2], n[3])
 		u.net_rot = n[4]
+		var was_dashing := u.net_dashing
 		u.net_dashing = flags & 4 != 0
 		if first or (u == player and u.net_dashing):
-			u.position = u.net_pos  # joining (or rejoining) mid-fight: start where the realm says
+			u.position = u.net_pos  # joining (or rejoining) mid-fight / mid-leap: be where the realm says
 			u.rotation.y = u.net_rot
 			u.net_from = u.net_pos
 			u.net_rot_from = u.net_rot
+		elif u == player and was_dashing:
+			# Our leap / charge just ended on the realm: land exactly where it put us. Without this the
+			# hero kept the height of the last mid-arc snapshot and hung in the air.
+			u.position = u.net_pos
+			u.rotation.y = u.net_rot
+			u.net_from = u.net_pos
+			u.net_rot_from = u.net_rot
+			u.grounded = u.net_pos.y <= 0.01
+			u.vy = 0.0
 		u.hp = n[5]
 		u.max_hp = n[6]
 		u.resource = n[7]

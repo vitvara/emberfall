@@ -4,7 +4,7 @@ extends RefCounted
 
 var unit: Unit
 var world  # RaidWorld
-var phase := 0  # 0 = asleep, 1 = ground, 2 = air, 3 = final
+var phase := 0  # 0 = arriving (fly-in before the fight), 1 = ground, 2 = air, 3 = final
 var timers := {}
 var melee_timer := 0.0
 var air_time := 0.0
@@ -13,6 +13,22 @@ var meteor_timer := 0.0
 var enraged := false
 var fly_height := 0.0
 var B: Dictionary = GameData.BOSS
+
+## Entrance: Vyrathax circles far off in the ash clouds during the countdown, then sweeps in along
+## this curve (quadratic Bézier, start -> control -> above the arena centre), lands and roars.
+## Low over the lava sea so the party's camera (which looks down at them) sees him coming.
+const ENTRY := [Vector3(-60, 6, -150), Vector3(32, 3, -60), Vector3(0, 6, 0)]
+const FLY_IN_TIME := 6.0
+const LAND_TIME := 1.8      # from touchdown to the roar that starts the fight
+var _arrive_t := 0.0
+var _landed_t := -1.0
+var _hover_t := 0.0
+
+
+static func entry_point(f: float) -> Vector3:
+	var a: Vector3 = ENTRY[0].lerp(ENTRY[1], f)
+	var b: Vector3 = ENTRY[1].lerp(ENTRY[2], f)
+	return a.lerp(b, f)
 
 
 func _init(u: Unit, w) -> void:
@@ -23,11 +39,10 @@ func _init(u: Unit, w) -> void:
 func tick(delta: float) -> void:
 	if not unit.alive:
 		return
-	unit.position.y = lerpf(unit.position.y, fly_height, clampf(delta * 1.5, 0.0, 1.0))
 	if phase == 0:
-		if unit.in_combat:
-			_start_phase1()
+		_arrive(delta)
 		return
+	unit.position.y = lerpf(unit.position.y, fly_height, clampf(delta * 1.5, 0.0, 1.0))
 	if not enraged and world.fight_time >= float(B["enrage_time"]):
 		enraged = true
 		unit.add_aura("enraged", unit)
@@ -51,10 +66,51 @@ func dmg(base) -> float:
 
 # ------------------------------------------------------------------ phases
 
+## Before the fight: hover far away until the countdown ends, fly in, land, roar.
+func _arrive(delta: float) -> void:
+	unit.untargetable = true
+	if not world.started:
+		_hover_t += delta
+		unit.position = ENTRY[0] + Vector3(0, sin(_hover_t * 1.3) * 1.5, 0)
+		unit.rotation.y = _yaw_along(entry_point(0.02) - ENTRY[0])
+		return
+	if _landed_t < 0.0:
+		_arrive_t += delta
+		var f := smoothstep(0.0, 1.0, minf(_arrive_t / FLY_IN_TIME, 1.0))
+		var p := entry_point(f)
+		var ahead := entry_point(minf(f + 0.03, 1.0))
+		var yaw := _yaw_along(ahead - p) if f < 0.97 else PI
+		unit.position = p
+		unit.rotation.y = lerp_angle(unit.rotation.y, lerp_angle(yaw, PI, clampf((f - 0.7) / 0.3, 0.0, 1.0)),
+			clampf(delta * 4.0, 0.0, 1.0))
+		if _arrive_t >= FLY_IN_TIME:
+			_landed_t = 0.0
+			fly_height = 0.0
+			world.boss_emote("Vyrathax descends upon the arena!")
+			world.boss_fx("land")
+		return
+	_landed_t += delta
+	unit.position.y = lerpf(unit.position.y, 0.0, clampf(delta * 2.5, 0.0, 1.0))
+	unit.rotation.y = lerp_angle(unit.rotation.y, PI, clampf(delta * 3.0, 0.0, 1.0))
+	if _landed_t >= LAND_TIME:
+		unit.position.y = 0.0
+		unit.untargetable = false
+		unit.in_combat = true
+		world.start_combat()
+		_start_phase1()
+
+
+## Yaw that faces along a flight direction (models face -Z at yaw 0).
+static func _yaw_along(dir: Vector3) -> float:
+	if Vector2(dir.x, dir.z).length() < 0.001:
+		return PI
+	return atan2(-dir.x, -dir.z)
+
+
 func _start_phase1() -> void:
 	phase = 1
 	timers = {"claw": 6.0, "breath": 14.0, "tail": 9.0, "pools": 11.0}
-	world.boss_emote("Vyrathax: \"Insects! You dare wake me?\"")
+	world.boss_emote("Vyrathax: \"Insects! You dare enter my domain?\"")
 	world.boss_fx("wake")
 
 
@@ -105,6 +161,8 @@ func _air(delta: float) -> void:
 
 func _ground(delta: float, final_phase: bool) -> void:
 	var tgt := unit.get_threat_target()
+	if tgt == null:
+		tgt = _nearest_hero()  # nobody has taunted or hit him yet
 	if tgt == null:
 		return
 	if unit.is_casting():
@@ -199,3 +257,11 @@ func _cataclysm_hit() -> void:
 	world.boss_fx("cataclysm_hit")
 	for p in world.party_alive():
 		p.take_damage(dmg(B["cataclysm"]["damage"]), "fire", unit, "Cataclysm")
+
+
+func _nearest_hero() -> Unit:
+	var best: Unit = null
+	for p in world.party_alive():
+		if best == null or unit.distance_to_unit(p) < unit.distance_to_unit(best):
+			best = p
+	return best

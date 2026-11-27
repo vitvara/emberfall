@@ -876,9 +876,9 @@ func _process(delta: float) -> void:
 	error_label.modulate.a = clampf(_error_t, 0.0, 1.0)
 	countdown_label.visible = not world.combat_active
 	if not world.started:
-		countdown_label.text = "Pull in %d" % ceili(world.countdown)
+		countdown_label.text = "Vyrathax arrives in %d" % ceili(world.countdown)
 	elif world.player.role == GameData.ROLE_TANK and not (world.player.brain is BotBrain):
-		countdown_label.text = "You are the tank — taunt (3) or strike the dragon to pull!"
+		countdown_label.text = "You are the tank — taunt (3) the moment he lands!"
 	else:
 		countdown_label.text = ""
 	_update_taunt_warning()
@@ -910,7 +910,7 @@ func _update_boss() -> void:
 	boss_bar.value = b.hp_pct()
 	boss_text.text = "%s / %s  (%.1f%%)" % [_k(b.hp), _k(b.max_hp), b.hp_pct() * 100.0]
 	var ph: int = world.boss_phase()
-	var names := ["Asleep", "Phase 1 — The Tyrant Wakes", "Phase 2 — Sky of Ash (immune, kill the whelps!)",
+	var names := ["Approaching", "Phase 1 — The Tyrant Wakes", "Phase 2 — Sky of Ash (immune, kill the whelps!)",
 		"Phase 3 — Final Inferno"]
 	phase_label.text = names[ph]
 	if b.has_aura("enraged"):

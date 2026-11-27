@@ -18,6 +18,7 @@ signal hero_chosen(class_id: String)
 const CONFIG_PATH := "user://client.cfg"
 const CLASS_ICONS := {
 	"warden": "res://assets/icons/raise_shield.svg",
+	"arms": "res://assets/icons/mortal_blow.svg",
 	"oracle": "res://assets/icons/sanctuary.svg",
 	"blademaster": "res://assets/icons/executioners_cut.svg",
 	"arcanist": "res://assets/icons/frost_shard.svg",
@@ -342,7 +343,7 @@ func auth_failed(message: String) -> void:
 # ------------------------------------------------------------------ offline practice
 
 func _build_solo() -> void:
-	var p := _center_panel(860, 600)
+	var p := _center_panel(860, 720)
 	screens["solo"] = p
 	var v := _vbox(p, 12)
 	_header(v, "Offline Practice", "Pick a hero, then walk through the Outpost portal to face the dragon")
@@ -409,7 +410,7 @@ func _icon(cid: String, size: float) -> TextureRect:
 # ------------------------------------------------------------------ choose your hero (online)
 
 func _build_hero() -> void:
-	var p := _center_panel(860, 470)
+	var p := _center_panel(860, 590)
 	screens["hero"] = p
 	var v := _vbox(p, 12)
 	_header(v, "Choose Your Hero", "The hero you walk the Outpost as and take into the raid")

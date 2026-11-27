@@ -335,6 +335,9 @@ func _start_dedicated() -> void:
 
 var _shot_path := ""
 var _shot_at := 0.0
+var _shot_i := 0
+var _hero_cam: Camera3D
+var _hero_cam_off := Vector3.ZERO
 var _clock := 0.0
 var _debug_t := 0.0
 
@@ -357,14 +360,26 @@ func _process(delta: float) -> void:
 				menu.visible if menu else false])
 	if _args.has("quit-at") and _clock >= float(_args["quit-at"]):
 		get_tree().quit()
+	if _hero_cam != null and hub != null:
+		# Dev: --herocam=x,y,z keeps a fixed camera at that offset from the hero
+		var hp: Vector3 = hub.player.global_position
+		_hero_cam.global_position = hp + _hero_cam_off
+		_hero_cam.look_at(hp + Vector3(0, 1.1, 0))
 	if _shot_path != "" and _clock >= _shot_at:
-		get_viewport().get_texture().get_image().save_png(_shot_path)
-		print("Saved screenshot ", _shot_path)
-		get_tree().quit()
+		var n := int(_args.get("shots", "1"))
+		var path := _shot_path
+		if n > 1:
+			path = _shot_path.replace(".png", "_%02d.png" % _shot_i)
+		get_viewport().get_texture().get_image().save_png(path)
+		print("Saved screenshot ", path)
+		_shot_i += 1
+		_shot_at += float(_args.get("shot-every", "0.05"))
+		if _shot_i >= n:
+			get_tree().quit()
 
 
 ## Dev flags: --hub=<class> [--hubwalk] | --autostart=<class> [--autoplay] [--zoom=6] [--fxtest=<skill>] [--speed=4]
-## [--screenshot=<file> --shot-at=<sec>] [--autojoin=<ip> ...] [--menu=<screen>] [--netdebug] [--quit-at=<sec>]
+## [--screenshot=<file> --shot-at=<sec> [--shots=N --shot-every=<sec>]] [--herocam=x,y,z] [--autojoin=<ip> ...] [--menu=<screen>] [--netdebug] [--quit-at=<sec>]
 ## Dev: --hubwalk[=<delay>] walks the hero up the road and through the portal; --hubcircle walks laps.
 func _hub_dev() -> void:
 	if hub == null:
@@ -372,7 +387,27 @@ func _hub_dev() -> void:
 	if _args.has("hubwalk"):
 		var delay := float(_args["hubwalk"]) if _args["hubwalk"] != "true" else 1.0
 		hub.create_tween().tween_property(hub.player, "position", Vector3(0, 0, -0.8), 3.0).set_delay(delay)
-	if _args.has("hubtrain"):
+	if _args.has("hubtrain") and _args["hubtrain"] != "true":
+		# Dev: --hubtrain=<skill_id>: stand next to the middle dummy with full resources and repeat one skill
+		var h2 := hub
+		var aid: String = _args["hubtrain"]
+		var dm: Unit = h2.dummies[1]["unit"]
+		h2.player.position = dm.position + Vector3(-2.5, 0, 0)
+		h2.player.rotation.y = -PI / 2.0
+		h2.controller.yaw = -PI / 2.0 + 0.5
+		h2.controller.pitch = 0.4
+		h2.controller.dist = 9.0
+		h2.controller.set_target(dm)
+		var t2 := Timer.new()
+		t2.wait_time = 0.5
+		t2.autostart = true
+		h2.add_child(t2)
+		t2.timeout.connect(func():
+			h2.player.resource = h2.player.max_resource
+			var err := h2.player.use_ability(aid, dm, dm.position)
+			if err != "" and err != "Not ready yet" and err != "GCD":
+				print("[train] %s: %s" % [aid, err]))
+	elif _args.has("hubtrain"):
 		# Dev: stand in the training yard, target the middle dummy and keep using skills
 		var h := hub
 		h.player.position = HubWorld.YARD + Vector3(-9, 0, 0)
@@ -537,6 +572,13 @@ func _dev_flags() -> void:
 		var look := Vector3(float(c[3]), float(c[4]), float(c[5])) if c.size() >= 6 else Vector3(0, 4, 0)
 		cam.look_at(look)
 		cam.make_current()
+	if args.has("herocam") and hub:
+		var hc: PackedStringArray = String(args["herocam"]).split(",")
+		_hero_cam_off = Vector3(float(hc[0]), float(hc[1]), float(hc[2]))
+		_hero_cam = Camera3D.new()
+		_hero_cam.fov = 45
+		add_child(_hero_cam)
+		_hero_cam.make_current()
 	if args.has("escmenu") and hud:
 		hud.set_menu_open(true)  # dev: screenshot the game menu
 	if args.has("rejoinpreview"):

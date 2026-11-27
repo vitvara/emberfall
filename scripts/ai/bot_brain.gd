@@ -260,7 +260,10 @@ func _act(moving: bool) -> void:
 		GameData.ROLE_HEALER:
 			_act_healer(moving)
 		GameData.ROLE_MELEE:
-			_act_melee()
+			if unit.class_id == "arms":
+				_act_arms()
+			else:
+				_act_melee()
 		GameData.ROLE_RANGED:
 			_act_ranged(moving)
 
@@ -419,6 +422,33 @@ func _act_melee() -> void:
 	if unit.combo >= 5 and _try("executioners_cut", t):
 		return
 	_try("wicked_strike", t)
+
+
+## Arms Warden: charge in, keep the target sundered and bleeding, spin on packs, execute on procs.
+func _act_arms() -> void:
+	var t: Unit = unit.target
+	if t == null or not t.alive or t.untargetable:
+		return
+	var d := unit.distance_to_unit(t)
+	if d > 8.0 and d <= 25.0 and _try("charge", t):
+		return
+	var near: Array = world.enemies_alive().filter(
+		func(e): return unit.flat_pos().distance_to(e.flat_pos()) - e.radius <= 8.0)
+	if not unit.has_aura("steel_cyclone") and (near.size() >= 2 or (t.is_boss and t.has_aura("sundered"))) \
+			and _try("steel_cyclone"):
+		return
+	if not unit.in_range(t, GameData.MELEE_RANGE):
+		return
+	if _try("execution_strike", t):  # below 20%, or Sudden Death is up
+		return
+	if not t.has_aura("sundered") and _try("sundering_blow", t):
+		return
+	var gash := t.find_aura("gashed", unit)
+	if (gash.is_empty() or float(gash["remaining"]) < 4.0) and _try("deep_gash", t):
+		return
+	if _try("overwhelm", t):
+		return
+	_try("mortal_blow", t)
 
 
 func _act_ranged(moving: bool) -> void:

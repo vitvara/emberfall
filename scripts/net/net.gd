@@ -771,7 +771,7 @@ func _suggest_class(party: Dictionary, exclude_slot := -1) -> String:
 		return "warden"
 	if roles["healer"] == 0:
 		return "oracle"
-	return "blademaster" if randi() % 2 == 0 else "arcanist"
+	return ["blademaster", "arcanist", "arms"][randi() % 3]
 
 
 ## Players and chosen bots keep their classes; empty seats get bots that fill missing roles first.

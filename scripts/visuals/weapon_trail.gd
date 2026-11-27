@@ -8,6 +8,7 @@ var tip_node: Node3D
 var color := Color(1, 1, 1)
 var emitting := false
 var life := 0.2
+var fade_pow := 1.0  # > 1: bright leading edge that falls off fast (a streak, not a sheet)
 
 var _pts: Array = []  # [base: Vector3, tip: Vector3, age: float]
 var _im: ImmediateMesh
@@ -47,7 +48,7 @@ func _process(delta: float) -> void:
 		return
 	_im.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
 	for p in _pts:
-		var a := 1.0 - float(p[2]) / life
+		var a := pow(1.0 - float(p[2]) / life, fade_pow)
 		_im.surface_set_color(Color(color.r, color.g, color.b, 0.0))
 		_im.surface_add_vertex(p[0])
 		_im.surface_set_color(Color(lerpf(color.r, 1.0, a * 0.5), lerpf(color.g, 1.0, a * 0.5),

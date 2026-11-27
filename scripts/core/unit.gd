@@ -40,6 +40,7 @@ var mana_regen := 0.0
 var base_haste := 0.0
 var threat_mult := 1.0
 var auto_attack := {}
+var auto_proc := {}  # {aura, chance}: auto-attacks can grant this aura (Arms: Sudden Death)
 
 # State
 var alive := true
@@ -90,6 +91,7 @@ func setup_class(cid: String, display_name: String) -> void:
 	base_stats = c["stats"]
 	threat_mult = c["threat_mult"]
 	auto_attack = c["auto_attack"]
+	auto_proc = c.get("auto_proc", {})
 	ability_ids = c["abilities"]
 	radius = 0.45
 	_compute_stats()
@@ -299,6 +301,13 @@ func _aura_tick(a: Dictionary) -> void:
 		receive_heal(r[0], caster, a["def"]["name"], r[1])
 	elif e["type"] == "heal_pct":
 		receive_heal(max_hp * float(e["pct"]), caster, a["def"]["name"])
+	elif e["type"] == "aoe_damage":
+		# Whirling attacks: hit every enemy around the bearer
+		for en in world.enemies_alive():
+			if flat_pos().distance_to(en.flat_pos()) - en.radius <= float(e["radius"]):
+				var r3: Array = caster.roll(e["base"], e["coef"], e["school"], false)
+				en.take_damage(r3[0], e["school"], caster, a["def"]["name"], r3[1])
+		world.on_aura_pulse(self, a["id"], float(e["radius"]))
 	else:
 		var r2: Array = caster.roll(e["base"], e["coef"], e["school"], false)
 		take_damage(r2[0], e["school"], caster, a["def"]["name"], r2[1])
@@ -350,6 +359,8 @@ func _tick_auto_attack(delta: float) -> void:
 		var r: Array = roll(auto_attack["base"], auto_attack["coef"], "physical", false)
 		world.on_auto_attack(self, target)
 		target.take_damage(r[0], "physical", self, "Attack", r[1])
+		if not auto_proc.is_empty() and randf() < float(auto_proc["chance"]):
+			add_aura(auto_proc["aura"], self)
 	else:
 		auto_timer = 0.2
 
@@ -405,7 +416,8 @@ func can_use(aid: String, tgt: Unit, point = null) -> String:
 				return "No enemy target"
 			if t.untargetable:
 				return "Target is immune"
-			if ab.has("below_pct") and t.hp_pct() >= float(ab["below_pct"]):
+			if ab.has("below_pct") and t.hp_pct() >= float(ab["below_pct"]) \
+					and not (ab.has("proc_aura") and has_aura(ab["proc_aura"])):
 				return "Target must be below %d%% health" % int(float(ab["below_pct"]) * 100)
 			if ab.has("min_range") and distance_to_unit(t) < float(ab["min_range"]):
 				return "Too close"
@@ -430,6 +442,9 @@ func use_ability(aid: String, tgt: Unit, point = null) -> String:
 		return err
 	var ab: Dictionary = GameData.ABILITIES[aid]
 	var t := resolve_target(aid, tgt)
+	# A proc that let us ignore the health requirement is used up
+	if ab.has("proc_aura") and ab.has("below_pct") and t != null and t.hp_pct() >= float(ab["below_pct"]):
+		remove_aura(ab["proc_aura"])
 	var cast_time: float = ab["cast"]
 	if ab["gcd"]:
 		var g: float = GameData.ENERGY_GCD if resource_type == "energy" else GameData.BASE_GCD

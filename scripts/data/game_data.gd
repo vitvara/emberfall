@@ -16,9 +16,10 @@ const MOVE_SPEED := 7.0
 
 # Party composition. The player replaces the first slot of their chosen class.
 const PARTY_LAYOUT := ["warden", "oracle", "blademaster", "arcanist", "arcanist"]
-const CLASS_ORDER := ["warden", "oracle", "blademaster", "arcanist"]
+const CLASS_ORDER := ["warden", "arms", "oracle", "blademaster", "arcanist"]
 const BOT_NAMES := {
 	"warden": ["Thorgar"],
+	"arms": ["Brakka", "Halvard"],
 	"oracle": ["Seliane"],
 	"blademaster": ["Kaito"],
 	"arcanist": ["Nyra", "Corvin"],
@@ -35,6 +36,20 @@ const CLASSES := {
 		"auto_attack": {"interval": 2.0, "base": 60, "coef": 0.4},
 		"abilities": ["bulwark_strike", "charge", "raise_shield", "challenging_shout",
 			"shield_bash", "execution_strike", "thunder_leap"],
+	},
+	# The warrior's two-handed sword specialisation: same rage, no shield, all damage.
+	"arms": {
+		"name": "Arms Warden", "role": "melee", "resource": "rage",
+		"color": Color(0.88, 0.36, 0.26),
+		"desc": "Melee DPS (warrior, two-handed sword). Gash, sunder and cleave the dragon apart.",
+		"stats": {"str": 220, "agi": 90, "int": 0, "sta": 300, "spi": 0,
+			"crit": 8.0, "haste": 0.0, "armor": 3500},
+		"threat_mult": 1.0,
+		"auto_attack": {"interval": 3.0, "base": 120, "coef": 0.6},
+		# Sudden Death: greatsword swings can make Execution Strike usable on any target
+		"auto_proc": {"aura": "sudden_death", "chance": 0.10},
+		"abilities": ["mortal_blow", "overwhelm", "sundering_blow", "deep_gash",
+			"execution_strike", "steel_cyclone", "charge"],
 	},
 	"oracle": {
 		"name": "Oracle", "role": "healer", "resource": "mana",
@@ -102,12 +117,38 @@ const ABILITIES := {
 			{"type": "damage", "school": "physical", "base": 80, "coef": 0.3, "threat": 1.0}]},
 	"execution_strike": {"name": "Execution Strike", "cost": 30, "cast": 0.0, "cd": 0.0, "gcd": true,
 		"range": MELEE_RANGE, "target": "enemy", "moving": true, "below_pct": 0.2,
-		"desc": "Only on targets below 20% health: a brutal blow for 500 + 2.2 AP.",
+		"proc_aura": "sudden_death",
+		"desc": "Only on targets below 20% health (Arms: or while Sudden Death is up): a brutal blow for 500 + 2.2 AP.",
 		"effects": [{"type": "damage", "school": "physical", "base": 500, "coef": 2.2, "threat": 1.5}]},
 	"thunder_leap": {"name": "Thunder Leap", "cost": 0, "cast": 0.0, "cd": 20.0, "gcd": true,
 		"range": 30.0, "target": "ground", "radius": 8.0, "moving": true,
 		"desc": "GROUND: leap to the clicked spot. On landing, hit every enemy within 8 m for 200 + 0.8 AP with triple threat.",
 		"effects": [{"type": "leap", "school": "physical", "base": 200, "coef": 0.8, "threat": 3.0}]},
+
+	# ---------------- Arms Warden (two-handed warrior DPS) ----------------
+	"mortal_blow": {"name": "Mortal Blow", "cost": 30, "cast": 0.0, "cd": 6.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Bring the greatsword down with your whole weight: 260 + 1.2 AP.",
+		"effects": [{"type": "damage", "school": "physical", "base": 260, "coef": 1.2}]},
+	"overwhelm": {"name": "Overwhelm", "cost": 0, "cast": 0.0, "cd": 8.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "A fast cut for 160 + 0.8 AP. Generates 10 Rage and grants Momentum (+10% damage for 8 sec).",
+		"effects": [{"type": "damage", "school": "physical", "base": 160, "coef": 0.8},
+			{"type": "resource", "amount": 10}, {"type": "aura", "aura": "momentum", "on": "self"}]},
+	"sundering_blow": {"name": "Sundering Blow", "cost": 10, "cast": 0.0, "cd": 30.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Shatter the target's armour: 220 + 1.0 AP, and it takes 20% more damage from everyone for 10 sec.",
+		"effects": [{"type": "damage", "school": "physical", "base": 220, "coef": 1.0},
+			{"type": "aura", "aura": "sundered", "on": "target"}]},
+	"deep_gash": {"name": "Deep Gash", "cost": 15, "cast": 0.0, "cd": 0.0, "gcd": true,
+		"range": MELEE_RANGE, "target": "enemy", "moving": true,
+		"desc": "Open a wound for 90 + 0.4 AP. The target bleeds for 50 + 0.25 AP every 3 sec for 15 sec (bleeds ignore armour).",
+		"effects": [{"type": "damage", "school": "physical", "base": 90, "coef": 0.4},
+			{"type": "aura", "aura": "gashed", "on": "target"}]},
+	"steel_cyclone": {"name": "Steel Cyclone", "cost": 20, "cast": 0.0, "cd": 40.0, "gcd": true,
+		"range": 0.0, "target": "self", "moving": true,
+		"desc": "AOE: whirl your greatsword for 5 sec, hitting every enemy within 8 m for 100 + 0.45 AP each second. You can move while spinning.",
+		"effects": [{"type": "aura", "aura": "steel_cyclone", "on": "self"}]},
 
 	# ---------------- Oracle (priest healer) ----------------
 	"flash_mend": {"name": "Flash Mend", "cost": 200, "cast": 1.5, "cd": 0.0, "gcd": true,
@@ -232,6 +273,18 @@ const AURAS := {
 		"icon": "healing_draught", "kind": "buff", "desc": "Healing 7.5% of max health every second."},
 	"quickening": {"name": "Quickening", "duration": 15.0, "mods": {"haste": 30.0},
 		"icon": "quickening", "kind": "buff", "desc": "Haste increased by 30%."},
+	"momentum": {"name": "Momentum", "duration": 8.0, "mods": {"damage_done": 1.1},
+		"icon": "overwhelm", "kind": "buff", "desc": "Damage done increased by 10%."},
+	"sundered": {"name": "Sundered", "duration": 10.0, "debuff": true, "mods": {"damage_taken": 1.2},
+		"icon": "sundering_blow", "kind": "physical", "desc": "Armour shattered: taking 20% more damage."},
+	"gashed": {"name": "Deep Gash", "duration": 15.0, "debuff": true, "tick": 3.0,
+		"tick_effect": {"type": "damage", "school": "bleed", "base": 50, "coef": 0.25},
+		"icon": "deep_gash", "kind": "physical", "desc": "Bleeding every 3 sec."},
+	"steel_cyclone": {"name": "Steel Cyclone", "duration": 5.0, "tick": 1.0,
+		"tick_effect": {"type": "aoe_damage", "school": "physical", "base": 100, "coef": 0.45, "radius": 8.0},
+		"icon": "steel_cyclone", "kind": "buff", "desc": "Whirling: hitting every enemy within 8 m each second."},
+	"sudden_death": {"name": "Sudden Death", "duration": 10.0,
+		"icon": "execution_strike", "kind": "buff", "desc": "Execution Strike usable on any target."},
 	"chilled": {"name": "Chilled", "duration": 5.0, "debuff": true, "mods": {"speed": 0.5},
 		"icon": "frost_shard", "kind": "magic", "desc": "Movement slowed by 50%."},
 	"poisoned": {"name": "Poisoned", "duration": 2.0, "debuff": true,

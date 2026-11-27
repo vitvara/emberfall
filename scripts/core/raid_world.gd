@@ -101,8 +101,20 @@ static func solo_roster(player_class: String) -> Array:
 	var roster: Array = []
 	var used := false
 	var name_idx := {}
+	# A class missing from the layout (e.g. Arms) takes the first seat of the same role instead
+	var seat_class := player_class
+	if not (player_class in GameData.PARTY_LAYOUT):
+		var role: String = GameData.CLASSES[player_class]["role"]
+		for cid in GameData.PARTY_LAYOUT:
+			if GameData.CLASSES[cid]["role"] == role:
+				seat_class = cid
+				break
 	for cid in GameData.PARTY_LAYOUT:
-		var mine: bool = not used and cid == player_class
+		var mine: bool = not used and cid == seat_class
+		if mine:
+			used = true
+			roster.append({"class": player_class, "peer": 1, "name": "You"})
+			continue
 		if mine:
 			used = true
 			roster.append({"class": cid, "peer": 1, "name": "You"})
@@ -534,6 +546,10 @@ func net_in(ev: String, a: Array) -> void:
 			var c3 := unit_by_id(a[0])
 			if c3:
 				SkillFx.blink(self, c3, a[1], a[2])
+		"pulse":
+			var cp := unit_by_id(a[0])
+			if cp:
+				SkillFx.aura_pulse(self, cp, a[1], a[2])
 		"landed":
 			var c4 := unit_by_id(a[0])
 			if c4:
@@ -703,6 +719,13 @@ func on_blink(u: Unit, from: Vector3, to: Vector3) -> void:
 	force_position(u)
 	if visuals:
 		SkillFx.blink(self, u, from, to)
+
+
+## A whirling aura (Steel Cyclone) just hit everything around its bearer.
+func on_aura_pulse(u: Unit, aura_id: String, r: float) -> void:
+	net_out("pulse", [u.net_id, aura_id, r])
+	if visuals:
+		SkillFx.aura_pulse(self, u, aura_id, r)
 
 
 func on_dash_landed(u: Unit, kind: String, r: float) -> void:

@@ -377,7 +377,7 @@ static func emitter(o: Dictionary) -> GPUParticles3D:
 static func burst(parent: Node, pos: Vector3, o: Dictionary) -> GPUParticles3D:
 	var p := emitter(o)
 	parent.add_child(p)
-	p.global_position = pos
+	p.position = pos  # parent space (the Outpost sits off-origin)
 	p.restart()
 	_free_after(p, p.lifetime + 0.5)
 	return p
@@ -444,7 +444,7 @@ static func light_column(parent: Node, pos: Vector3, c: Color, height := 4.0, ra
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
-	mi.global_position = pos + Vector3(0, height / 2.0, 0)
+	mi.position = pos + Vector3(0, height / 2.0, 0)  # parent space (the Outpost sits off-origin)
 	mi.scale = Vector3(0.2, 1, 0.2)
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3(1, 1, 1), dur * 0.25)
@@ -463,7 +463,7 @@ static func shockwave(parent: Node, pos: Vector3, c: Color, radius := 6.0, dur :
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
-	mi.global_position = Vector3(pos.x, height, pos.z)
+	mi.position = Vector3(pos.x, height, pos.z)  # parent space (the Outpost sits off-origin)
 	mi.scale = Vector3(0.3, 1, 0.3)
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3(radius, 1, radius), dur).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
@@ -482,7 +482,7 @@ static func bubble_flash(parent: Node, pos: Vector3, c: Color, radius := 1.2, du
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
-	mi.global_position = pos
+	mi.position = pos  # parent space (the Outpost sits off-origin)
 	mi.scale = Vector3.ONE * radius * 0.5
 	var tw := mi.create_tween()
 	tw.tween_property(mi, "scale", Vector3.ONE * radius, dur * 0.4).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
@@ -503,7 +503,7 @@ static func swoosh(parent: Node, center: Vector3, yaw: float, tilt: float, c: Co
 		_swoosh_shader = load("res://shaders/swoosh.gdshader")
 	var pivot := Node3D.new()
 	parent.add_child(pivot)
-	pivot.global_position = center
+	pivot.position = center  # parent space (the Outpost sits off-origin)
 	pivot.rotation = Vector3(0, yaw, 0)
 	var tilt_node := Node3D.new()
 	tilt_node.rotation.z = tilt
@@ -632,7 +632,7 @@ static func flash_light(parent: Node, pos: Vector3, c: Color, energy := 4.0, rng
 	l.light_energy = energy
 	l.omni_range = rng
 	parent.add_child(l)
-	l.global_position = pos
+	l.position = pos  # parent space (the Outpost sits off-origin)
 	var tw := l.create_tween()
 	tw.tween_property(l, "light_energy", 0.0, dur)
 	tw.tween_callback(l.queue_free)
@@ -717,7 +717,7 @@ static func rune_decal(c: Color, radius: float, alpha := 0.9) -> MeshInstance3D:
 static func rune_flash(parent: Node, pos: Vector3, c: Color, radius := 2.0, dur := 0.8) -> void:
 	var mi := rune_decal(c, radius, 1.0)
 	parent.add_child(mi)
-	mi.global_position = Vector3(pos.x, 0.08, pos.z)
+	mi.position = Vector3(pos.x, 0.08, pos.z)  # parent space (the Outpost sits off-origin)
 	mi.scale = Vector3(0.6, 1, 0.6)
 	var m := mi.material_override as StandardMaterial3D
 	var tw := mi.create_tween()
@@ -738,7 +738,7 @@ static func ground_crack(parent: Node, pos: Vector3, c: Color, radius := 4.0, du
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
-	mi.global_position = Vector3(pos.x, 0.07, pos.z)
+	mi.position = Vector3(pos.x, 0.07, pos.z)  # parent space (the Outpost sits off-origin)
 	mi.rotation.y = randf() * TAU
 	var tw := mi.create_tween()
 	tw.tween_property(m, "albedo_color:a", 0.0, dur).set_ease(Tween.EASE_IN)
@@ -809,7 +809,7 @@ static func radial_disc(c: Color, radius: float, intensity := 1.0, flow := 4.0) 
 static func nova(parent: Node, pos: Vector3, c: Color, radius := 3.0, dur := 0.6) -> void:
 	var mi := radial_disc(c, 1.0, 1.4)
 	parent.add_child(mi)
-	mi.global_position = Vector3(pos.x, 0.08, pos.z)
+	mi.position = Vector3(pos.x, 0.08, pos.z)
 	mi.scale = Vector3(radius * 0.3, 1, radius * 0.3)
 	var m := mi.material_override as ShaderMaterial
 	var tw := mi.create_tween()
@@ -890,7 +890,7 @@ static func ice_burst(parent: Node, pos: Vector3, scale := 1.0) -> void:
 	var p := shard_emitter({"amount": int(10 * scale) + 4, "lifetime": 0.35, "vmin": 6.0 * scale, "vmax": 11.0 * scale,
 		"spread": 180.0, "damping": 14.0, "size": 0.5, "scale_min": 0.35 * scale, "scale_max": 0.6 * scale})
 	parent.add_child(p)
-	p.global_position = pos
+	p.position = pos
 	p.restart()
 	_free_after(p, 1.0)
 	burst(parent, pos, {"amount": int(18 * scale), "lifetime": 0.9, "vmin": 1.0, "vmax": 4.0 * scale,
@@ -917,7 +917,7 @@ static func x_slash(parent: Node, pos: Vector3, c: Color, size := 1.4, yaw := 0.
 		mi.material_override = m
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		parent.add_child(mi)
-		mi.global_position = pos
+		mi.position = pos
 		mi.rotation.z = (0.75 if k == 0 else -0.75) + yaw
 		mi.scale = Vector3(1, 0.1, 1)
 		var tw := mi.create_tween()
@@ -1005,7 +1005,7 @@ static func crystal_solid_mesh(height: float, width: float) -> ArrayMesh:
 static func ice_spikes(parent: Node, pos: Vector3, scale := 1.0, hold := 0.8) -> void:
 	var root := Node3D.new()
 	parent.add_child(root)
-	root.global_position = Vector3(pos.x, 0.0, pos.z)
+	root.position = Vector3(pos.x, 0.0, pos.z)
 	root.rotation.y = randf() * TAU
 	var count := randi_range(3, 5)
 	for i in count:
@@ -1033,7 +1033,7 @@ static func ice_fall(parent: Node, land: Vector3, scale := 1.0, on_land := Calla
 	var dirv := Vector3(0.3, -1.0, 0.18).normalized()
 	var height := 15.0
 	var start := land - dirv * (height / -dirv.y)
-	shard.global_position = start
+	shard.position = start
 	var head := MeshInstance3D.new()
 	head.mesh = crystal_mesh()
 	head.scale = Vector3.ONE * 2.6 * scale
@@ -1047,7 +1047,7 @@ static func ice_fall(parent: Node, land: Vector3, scale := 1.0, on_land := Calla
 	shard.add_child(sparkle)
 	var dur := 0.34
 	var tw := shard.create_tween()
-	tw.tween_property(shard, "global_position", Vector3(land.x, 0.1, land.z), dur).set_ease(Tween.EASE_IN)
+	tw.tween_property(shard, "position", Vector3(land.x, 0.1, land.z), dur).set_ease(Tween.EASE_IN)
 	tw.tween_callback(func():
 		head.visible = false
 		sparkle.emitting = false
@@ -1067,7 +1067,7 @@ static func ice_impact(parent: Node, pos: Vector3, scale := 1.0) -> void:
 	var splinters := shard_emitter({"amount": 8, "lifetime": 0.35, "vmin": 5.0, "vmax": 9.0, "direction": Vector3.UP,
 		"spread": 70.0, "damping": 10.0, "gravity": Vector3(0, -14, 0), "scale_min": 0.25 * scale, "scale_max": 0.45 * scale})
 	parent.add_child(splinters)
-	splinters.global_position = pos
+	splinters.position = pos
 	splinters.restart()
 	_free_after(splinters, 1.0)
 	burst(parent, pos + Vector3(0, 0.3, 0), {"amount": 6, "lifetime": 1.1, "vmin": 0.6, "vmax": 1.6, "size": 1.6,
@@ -1118,7 +1118,7 @@ static func light_shaft(parent: Node, pos: Vector3, c: Color, height := 9.0, wid
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
-	mi.global_position = pos + Vector3(0, height / 2.0, 0)
+	mi.position = pos + Vector3(0, height / 2.0, 0)
 	var tw := mi.create_tween()
 	tw.tween_property(m, "albedo_color:a", 0.55, dur * 0.3)
 	tw.tween_property(m, "albedo_color:a", 0.0, dur * 0.7)
@@ -1132,7 +1132,7 @@ static func buff_burst(parent: Node, u: Unit, c: Color, strength := 1.0) -> void
 		"size": 0.38, "tex": "star", "spin": 300.0,
 		"colors": [Color(1, 1, 1, 0), Color(1, 1, 1, 1), Color(c.r, c.g, c.b, 0.9), Color(c.r, c.g, c.b, 0)]})
 	parent.add_child(p)
-	p.global_position = u.position
+	p.position = u.position
 	p.restart()
 	_free_after(p, 1.6)
 	burst(parent, chest(u), {"amount": int(16 * strength), "lifetime": 0.7, "vmin": 1.5, "vmax": 3.5, "size": 0.3,

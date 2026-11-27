@@ -49,6 +49,15 @@ var spiral_arms: Array = []   # [low_node, high_node, trail]
 var hand_fx: Array = []
 var focus_orb: MeshInstance3D
 var aura_fx := {}
+var staff_node: Node3D
+# Arms greatsword: held two-handed, aimed directly (grip point + blade direction in torso space)
+# with both arms reaching for the grip by IK, so swings can sweep in any plane.
+var gs: Node3D
+var _gs_g := Vector3(0.12, 0.05, -0.38)
+var _gs_d := Vector3(0, -0.34, -0.94)
+var _gs_u := Vector3.RIGHT
+var swing_flip := false
+var cyclone_rings: Array = []  # [pivot, low, high, trail, radius, height, speed]
 
 # Animation state
 var _t := 0.0
@@ -61,6 +70,7 @@ var _action_dur := 0.0
 var _flinch := 0.0
 var _dead_t := 0.0
 
+const GS_SWINGS := ["sweep", "light", "rising", "overhead", "spin", "shout"]
 const AURA_COLORS := {
 	"blade_rhythm": Color(1, 0.9, 0.3),
 	"healing_draught": Color(1, 0.35, 0.4),
@@ -105,12 +115,12 @@ func build(cid: String, c: Color) -> HeroRig:
 	var hand_m := skin
 	var boot_m := leather_dark
 	match cid:
-		"warden":
+		"warden", "arms":
 			chest_m = metal
 			arm_m = metal
 			hand_m = metal
 			boot_m = metal
-			leg_m = Models.mat(Color(0.3, 0.28, 0.33))
+			leg_m = Models.mat(Color(0.3, 0.28, 0.33) if cid == "warden" else Color(0.24, 0.2, 0.2))
 		"blademaster":
 			chest_m = Models.mat(Color(0.3, 0.22, 0.15))
 			arm_m = Models.mat(Color(0.26, 0.19, 0.13))
@@ -134,14 +144,14 @@ func build(cid: String, c: Color) -> HeroRig:
 	for arm in [[arm_l, elbow_l, hand_l], [arm_r, elbow_r, hand_r]]:
 		Models.part(arm[0], Models.capsule(0.095, 0.36), arm_m, Vector3(0, -0.15, 0))
 		Models.part(arm[1], Models.capsule(0.09, 0.34), arm_m, Vector3(0, -0.15, 0))
-		Models.part(arm[1], Models.cyl(0.11, 0.1, 0.12), leather if cid != "warden" else metal, Vector3(0, -0.24, 0))  # cuff
+		Models.part(arm[1], Models.cyl(0.11, 0.1, 0.12), metal if cid in ["warden", "arms"] else leather, Vector3(0, -0.24, 0))  # cuff
 		Models.part(arm[2], Models.sphere(0.115), hand_m, Vector3(0, -0.02, 0))
 	# --- legs (chunky boots)
 	for leg in [[leg_l, knee_l], [leg_r, knee_r]]:
 		Models.part(leg[0], Models.capsule(0.12, 0.44), leg_m, Vector3(0, -0.18, 0))
 		Models.part(leg[1], Models.capsule(0.11, 0.4), boot_m, Vector3(0, -0.18, 0))
 		Models.part(leg[1], Models.sphere(0.15), boot_m, Vector3(0, -0.36, -0.07), Vector3.ZERO, Vector3(1, 0.6, 1.5))
-		Models.part(leg[1], Models.cyl(0.13, 0.12, 0.1), leather if cid != "warden" else gold, Vector3(0, -0.06, 0))  # boot cuff
+		Models.part(leg[1], Models.cyl(0.13, 0.12, 0.1), gold if cid in ["warden", "arms"] else leather, Vector3(0, -0.06, 0))  # boot cuff
 
 	# --- class outfits
 	match cid:
@@ -169,8 +179,32 @@ func build(cid: String, c: Color) -> HeroRig:
 			Models.part(shield, Models.box(0.07, 0.7, 0.07), gold, Vector3(0, 0, -0.005))
 			Models.part(shield, Models.box(0.66, 0.07, 0.07), gold, Vector3(0, -0.33, 0))
 			Models.part(shield, Models.sphere(0.1), gold, Vector3(0, 0.05, -0.05))
-			_sword(hand_r, metal, gold, 1.1, Color(0.75, 0.85, 1))
+			gs = _sword(torso, metal, gold, 1.1, Color(0.75, 0.85, 1))
 			cape = _cape(torso, purple, 0.58, 1.05)
+		"arms":
+			var crimson := Models.mat(Color(0.55, 0.1, 0.08))
+			Models.part(torso, Models.box(0.36, 0.52, 0.03), crimson, Vector3(0, 0.2, -0.26))           # tabard
+			Models.part(torso, Models.box(0.12, 0.12, 0.035), gold, Vector3(0, 0.33, -0.28))
+			Models.part(hips, Models.box(0.32, 0.4, 0.03), crimson, Vector3(0, -0.16, -0.24))          # front flap
+			for sx in [-1.0, 1.0]:
+				var arm_node: Node3D = arm_l if sx < 0 else arm_r
+				Models.part(arm_node, Models.sphere(0.23), metal, Vector3(0.05 * sx, 0.04, 0), Vector3.ZERO, Vector3(1.35, 0.8, 1.2))
+				var spike := Models.cyl(0.0, 0.07, 0.3)
+				spike.radial_segments = 6
+				for k in 2:
+					Models.part(arm_node, spike, Models.mat(Color(0.2, 0.18, 0.2), 0.0, 0.4),
+						Vector3((0.1 + k * 0.06) * sx, 0.2, -0.06 + k * 0.12), Vector3(0, 0, -0.45 * sx))
+			# Open half-helm with curved horns; scarred face shows, braided beard
+			Models.part(head, Models.sphere(0.3), metal, Vector3(0, 0.33, 0.04), Vector3.ZERO, Vector3(1, 0.7, 1.05))
+			Models.part(head, Models.box(0.06, 0.18, 0.05), metal, Vector3(0, 0.27, -0.29))          # nose guard
+			for sx in [-1.0, 1.0]:
+				var horn := Models.cyl(0.0, 0.07, 0.42)
+				horn.radial_segments = 6
+				Models.part(head, horn, Models.mat(Color(0.85, 0.8, 0.68)), Vector3(0.3 * sx, 0.48, 0.02), Vector3(0, 0, -1.0 * sx))
+			Models.part(head, Models.capsule(0.07, 0.36), Models.mat(Color(0.45, 0.22, 0.1)), Vector3(0, -0.06, -0.2),
+				Vector3(0.35, 0, 0))                                                                     # braided beard
+			gs = _greatsword(torso, metal, gold, Color(1, 0.5, 0.3))
+			cape = _cape(torso, crimson, 0.55, 1.15)
 		"oracle":
 			robe = _robe(Models.mat(Color(0.98, 0.96, 0.88)), gold)
 			Models.part(torso, Models.box(0.16, 0.55, 0.03), gold, Vector3(0, 0.22, -0.26))          # stole
@@ -192,6 +226,7 @@ func build(cid: String, c: Color) -> HeroRig:
 			halo.outer_radius = 0.24
 			Models.part(head, halo, Models.mat(Color(1, 0.9, 0.5), 3.0), Vector3(0, 0.72, 0.08), Vector3(0.25, 0, 0))
 			var staff := _node(hand_r, Vector3.ZERO)
+			staff_node = staff
 			Models.part(staff, Models.cyl(0.04, 0.045, 2.1), Models.mat(Color(0.55, 0.36, 0.18)), Vector3(0, 0.3, 0))
 			var crescent := TorusMesh.new()
 			crescent.inner_radius = 0.16
@@ -250,17 +285,38 @@ func _node(parent: Node3D, pos: Vector3) -> Node3D:
 	return n
 
 
-func _sword(hand: Node3D, metal: Material, gold: Material, length: float, trail_col: Color) -> void:
-	var s := _node(hand, Vector3.ZERO)
-	s.rotation.x = -0.25
+## Warden: a one-handed arming sword, built at the grip with the blade along -Z (aimed by the rig).
+func _sword(parent: Node3D, metal: Material, gold: Material, length: float, trail_col: Color) -> Node3D:
+	var s := _node(parent, Vector3.ZERO)
 	Models.part(s, Models.box(0.1, 0.035, length), metal, Vector3(0, 0, -length / 2.0 - 0.12))
 	Models.part(s, Models.box(0.03, 0.04, length * 0.8), Models.mat(Color(0.55, 0.6, 0.7)), Vector3(0, 0.005, -length / 2.0 - 0.1))
 	Models.part(s, Models.box(0.36, 0.07, 0.07), gold, Vector3(0, 0, -0.1))
 	Models.part(s, Models.cyl(0.035, 0.035, 0.22), leather_mat(), Vector3(0, 0, 0.02), Vector3(PI / 2, 0, 0))
 	Models.part(s, Models.sphere(0.06), gold, Vector3(0, 0, 0.15))
-	var base := _node(s, Vector3(0, 0, -0.25))
+	var base := _node(s, Vector3(0, 0, -length * 0.5))
 	var tip := _node(s, Vector3(0, 0, -length - 0.1))
 	_add_trail(base, tip, trail_col)
+	(trails[-1] as WeaponTrail).fade_pow = 2.0
+	return s
+
+
+## Arms: a broad two-handed blade with a long grip and a heavy pommel.
+## Built at the grip point with the blade along -Z; the rig aims it every frame.
+func _greatsword(parent: Node3D, metal: Material, gold: Material, trail_col: Color) -> Node3D:
+	var s := _node(parent, Vector3.ZERO)
+	var length := 1.75
+	Models.part(s, Models.box(0.17, 0.045, length), metal, Vector3(0, 0, -length / 2.0 - 0.22))
+	Models.part(s, Models.box(0.04, 0.05, length * 0.85), Models.mat(Color(0.5, 0.52, 0.6)), Vector3(0, 0.005, -length / 2.0 - 0.2))
+	Models.part(s, Models.box(0.12, 0.046, 0.18), metal, Vector3(0, 0, -length - 0.18), Vector3(0, PI / 4.0, 0))  # tip
+	Models.part(s, Models.box(0.5, 0.08, 0.09), gold, Vector3(0, 0, -0.2))                       # crossguard
+	Models.part(s, Models.cyl(0.035, 0.035, 0.42), leather_mat(), Vector3(0, 0, 0.02), Vector3(PI / 2, 0, 0))  # two-hand grip
+	Models.part(s, Models.sphere(0.075), gold, Vector3(0, 0, 0.25))                              # pommel
+	# Trail only along the outer half of the blade: a glowing band, not a fan from the hilt
+	var base := _node(s, Vector3(0, 0, -length * 0.55))
+	var tip := _node(s, Vector3(0, 0, -length - 0.25))
+	_add_trail(base, tip, trail_col)
+	(trails[-1] as WeaponTrail).fade_pow = 2.2
+	return s
 
 
 func _dagger(hand: Node3D, metal: Material, gold: Material, trail_col: Color) -> void:
@@ -380,6 +436,21 @@ func _build_fx() -> void:
 		motes.emitting = false
 		hnd.add_child(motes)
 		hand_fx.append(motes)
+	if class_id == "arms":
+		# Steel Cyclone: flat bands of light whirling around the hero at a few radii and heights
+		var ring_defs := [[1.0, 0.75, 15.0, Color(1, 0.85, 0.5)], [1.55, 0.95, 13.0, Color(1, 0.5, 0.25)],
+			[2.15, 0.6, 11.5, Color(1, 0.95, 0.8)], [2.6, 0.85, 10.0, Color(0.55, 0.75, 1)]]
+		for i in ring_defs.size():
+			var d: Array = ring_defs[i]
+			var pv := _node(self, Vector3(0, d[1], 0))
+			pv.rotation = Vector3(0.12 * (1 if i % 2 == 0 else -1), i * 1.7, 0.08 * (i - 1.5))
+			var low := _node(pv, Vector3(0, 0, -float(d[0])))
+			var high := _node(pv, Vector3(0, 0.0, -float(d[0]) - 0.22 - 0.06 * i))
+			var tr := WeaponTrail.new().setup(low, high, d[3])
+			tr.life = 0.32
+			tr.fade_pow = 1.6
+			add_child(tr)
+			cyclone_rings.append([pv, low, high, tr, d[0], d[1], d[2]])
 
 
 func _fx_color() -> Color:
@@ -390,21 +461,44 @@ func _fx_color() -> Color:
 			return Color(0.55, 0.8, 1.0)
 		"warden":
 			return Color(0.6, 0.75, 1)
+		"arms":
+			return Color(1, 0.5, 0.3)
 	return Color(1, 0.9, 0.3)
 
 
 # ------------------------------------------------------------------ events
 
-## One-shot animation: slash, dual, stab, bash, spin, shout, release, block, heal, light
-func play(action: String) -> void:
+## One-shot animation: slash, dual, stab, bash, spin, shout, release, block, heal, light;
+## greatsword (Arms): sweep, light, rising, overhead, spin. `flip` mirrors a light swing.
+func play(action: String, flip := false) -> void:
+	if class_id == "arms":
+		action = {"slash": "sweep", "bash": "overhead", "stab": "light", "dual": "light"}.get(action, action)
+	elif class_id == "warden":
+		action = {"slash": "overhead"}.get(action, action)
 	_action = action
 	_action_t = 0.0
+	swing_flip = flip
 	_action_dur = {"slash": 0.45, "light": 0.32, "dual": 0.5, "stab": 0.3, "bash": 0.45, "spin": 0.5,
 		"shout": 0.8, "release": 0.4, "block": 0.7, "heal": 0.6, "flurry": 0.5, "drink": 0.8,
-		"throw": 0.45}.get(action, 0.4)
+		"throw": 0.45, "sweep": 0.6, "rising": 0.45, "overhead": 0.6}.get(action, 0.4)
 	if class_id == "blademaster":
 		# Rogues strike fast
 		_action_dur *= {"slash": 0.6, "light": 0.65, "dual": 0.7, "stab": 0.7, "spin": 0.8}.get(action, 1.0)
+	elif class_id == "arms":
+		# A greatsword swings heavier
+		_action_dur *= {"light": 1.15}.get(action, 1.0)
+	elif class_id == "warden":
+		_action_dur *= {"overhead": 0.85, "sweep": 0.85}.get(action, 1.0)
+
+
+## Greatsword: seconds from play() until the blade starts its strike (effects line up with the swing).
+static func strike_delay(action: String) -> float:
+	return {"sweep": 0.18, "light": 0.11, "rising": 0.13, "overhead": 0.24}.get(action, 0.1)
+
+
+## True while a skill swing is playing (an auto-attack shouldn't cut it off).
+func busy() -> bool:
+	return _action != "" and _action_t < _action_dur * 0.85 or unit != null and unit.has_aura("steel_cyclone")
 
 
 ## Briefly coil glowing ribbons around the hero (buffs like Blade Rhythm).
@@ -484,6 +578,12 @@ func _animate_body(delta: float) -> void:
 			t_elb_l.x = 0.8
 			t_elb_r.x = 0.8
 			t_torso.x -= 0.08
+		"arms":
+			# Both hands on the grip, blade held low across the body
+			t_arm_l = Vector3(0.55, 0, 0.5)
+			t_arm_r = Vector3(0.5, 0, -0.3)
+			t_elb_l = Vector3(0.9, 0, 0)
+			t_elb_r = Vector3(0.8, 0, 0)
 
 	if airborne:
 		t_leg_l = Vector3(0.9, 0, 0)
@@ -533,8 +633,14 @@ func _animate_body(delta: float) -> void:
 	var k := clampf(delta * 16.0, 0.0, 1.0)
 	if _action != "":
 		_action_t += delta
-		var p := _action_t / _action_dur
 		k = clampf(delta * 30.0, 0.0, 1.0)
+	var two_hand := class_id == "arms"
+	var gs_pose := {}
+	if gs != null:
+		# Aimed sword: the blade is placed directly and the hands follow it
+		gs_pose = _gs_target(_action_t / maxf(_action_dur, 0.01), s, airborne)
+	if _action != "" and not (gs != null and two_hand):
+		var p := _action_t / _action_dur
 		match _action:
 			"slash", "light":
 				var up := 2.7 if _action == "slash" else 1.9
@@ -668,24 +774,56 @@ func _animate_body(delta: float) -> void:
 					t_torso.y = -0.4
 					t_torso.x = -0.25
 					lunge = 0.2
-		if _action_t >= _action_dur:
-			_action = ""
+	if gs != null and (two_hand or _action in GS_SWINGS or unit.has_aura("steel_cyclone")):
+		# Sword swings: the body twists, lunges and follows through around the blade
+		var w: float = gs_pose.get("stance", 0.0)
+		if w > 0.0:
+			t_leg_l = Vector3(0.7 * w, 0, -0.22 * w)
+			t_leg_r = Vector3(-0.55 * w, 0, 0.22 * w)
+			t_knee_l = Vector3(-0.85 * w, 0, 0)
+			t_knee_r = Vector3(-0.45 * w, 0, 0)
+		t_torso.y = gs_pose.get("twist", t_torso.y)
+		t_torso.x = gs_pose.get("lean", t_torso.x)
+		t_head.x = gs_pose.get("head", t_head.x)
+		crouch = gs_pose.get("crouch", crouch)
+		lunge = gs_pose.get("lunge", lunge)
+	if _action != "" and _action_t >= _action_dur:
+		_action = ""
 
 	# Hit flinch
 	_flinch = maxf(0.0, _flinch - delta * 3.0)
 	t_torso.x += _flinch * 0.45
 	t_head.x += _flinch * 0.3
 
+	if unit.has_aura("steel_cyclone") and unit.alive:
+		# Steel Cyclone: keep whirling, blade held straight out
+		body_rot_y = fmod(_t * 13.0, TAU)
+		crouch = 0.2
+		t_leg_l = Vector3(0.4, 0, -0.3)
+		t_leg_r = Vector3(-0.3, 0, 0.3)
+		t_knee_l = Vector3(-0.6, 0, 0)
+		t_knee_r = Vector3(-0.6, 0, 0)
+		t_arm_l = Vector3(0.9, 0, 0.6)
+		t_arm_r = Vector3(0.2, 0, 1.45)
+		t_elb_r = Vector3(0.1, 0, 0)
+		t_torso.x = -0.15
 	_lerp_rot(leg_l, t_leg_l, k)
 	_lerp_rot(leg_r, t_leg_r, k)
 	_lerp_rot(knee_l, t_knee_l, k)
 	_lerp_rot(knee_r, t_knee_r, k)
-	_lerp_rot(arm_l, t_arm_l, k)
-	_lerp_rot(arm_r, t_arm_r, k)
-	_lerp_rot(elbow_l, t_elb_l, k)
-	_lerp_rot(elbow_r, t_elb_r, k)
+	if gs == null or not two_hand:
+		_lerp_rot(arm_l, t_arm_l, k)
+		_lerp_rot(elbow_l, t_elb_l, k)
+	if gs == null:
+		_lerp_rot(arm_r, t_arm_r, k)
+		_lerp_rot(elbow_r, t_elb_r, k)
 	_lerp_rot(torso, t_torso, k)
 	_lerp_rot(head, t_head, k)
+	if gs != null:
+		_gs_apply(gs_pose, clampf(delta * (32.0 if _action != "" or unit.has_aura("steel_cyclone") else 12.0), 0.0, 1.0))
+	if staff_node != null:
+		# The staff stays upright in the hand (head up, leaning slightly forward), whatever the arm does
+		staff_node.global_basis = body.global_basis * Basis.from_euler(Vector3(-0.15, 0, -0.08))
 	body.position.y = lerpf(body.position.y, body_y, k)
 	body.position.z = lerpf(body.position.z, -lunge, k)
 	hips.position.y = lerpf(hips.position.y, 0.8 - maxf(crouch, crouch_base), k)
@@ -694,11 +832,16 @@ func _animate_body(delta: float) -> void:
 	body.rotation.x = 0.0
 	if cape:
 		cape.rotation.x = lerpf(cape.rotation.x, -(0.1 + 0.55 * s + sin(_t * 3.0) * 0.05) - (0.5 if airborne else 0.0), k * 0.5)
+		cape.rotation.y = -torso.rotation.y * 0.8  # hangs from the shoulders, doesn't fling out when the torso twists
 	if robe:
 		robe.rotation.x = lerpf(robe.rotation.x, -0.12 * s + sin(_phase) * 0.04 * s, k)
-	var swinging := _action in ["slash", "light", "dual", "stab", "bash", "spin", "flurry"] and _action_t < _action_dur * 0.8
+	var swinging := (_action in ["slash", "light", "dual", "stab", "bash", "spin", "flurry", "sweep", "rising", "overhead"]
+			and _action_t > _action_dur * (0.25 if gs != null else 0.0) and _action_t < _action_dur * 0.8) \
+			or unit.has_aura("steel_cyclone")
 	for tr in trails:
 		tr.emitting = swinging
+		if gs != null:
+			tr.life = 0.45 if unit.has_aura("steel_cyclone") else 0.3
 	if focus_orb:
 		var pulse := 1.0 + sin(_t * 4.0) * 0.1 + (0.5 if casting else 0.0)
 		focus_orb.scale = Vector3.ONE * lerpf(focus_orb.scale.x, pulse, k)
@@ -713,6 +856,142 @@ func _place_shield(blocking: bool) -> void:
 	var yaw := body.rotation.y + face
 	shield_node.position = hp + Vector3(-0.08, 0.12, -0.1).rotated(Vector3.UP, yaw)
 	shield_node.rotation = Vector3(body.rotation.x, yaw, 0)
+
+
+# ------------------------------------------------------------------ greatsword (Arms)
+
+## Direction in torso space: yaw > 0 swings to the hero's right, pitch > 0 raises the tip
+## (past PI/2 it points up and back over the head).
+static func _dir(yaw: float, pitch: float) -> Vector3:
+	return Vector3(sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch))
+
+
+static func _ease(x: float) -> float:
+	x = clampf(x, 0.0, 1.0)
+	return x * x * (3.0 - 2.0 * x)
+
+
+## Where the greatsword should be this frame: grip point "g", blade direction "d", blade-face
+## normal "u" (torso space), plus body keys: twist, lean, crouch, lunge, stance, head.
+func _gs_target(p: float, s: float, airborne: bool) -> Dictionary:
+	if unit.has_aura("steel_cyclone") or _action == "spin":
+		# Whirlwind: blade held flat, straight out to the side, the body spins around it
+		return {"g": Vector3(0.3, 0.22, -0.18), "d": _dir(1.45, -0.04), "u": Vector3.UP,
+			"twist": -0.3, "lean": -0.1, "crouch": 0.22, "stance": 0.6}
+	match _action:
+		"sweep":
+			# Wide horizontal cleave: coil to the right, then rip the blade round to the far left
+			var f := _ease((p - 0.3) / 0.32)
+			var yaw := lerpf(1.25, -1.4, f) if p >= 0.3 else lerpf(0.4, 1.25, _ease(p / 0.3))
+			var twist := lerpf(-0.85, 0.9, f) if p >= 0.3 else lerpf(0.0, -0.85, _ease(p / 0.3))
+			var fl := Vector3(sin(yaw), 0, -cos(yaw))
+			return {"g": Vector3(0, lerpf(0.26, 0.12, f), 0) + fl * 0.38, "d": _dir(yaw * 1.08, lerpf(0.1, -0.1, f)),
+				"u": Vector3.UP, "twist": twist, "lean": lerpf(0.05, -0.35, f), "crouch": lerpf(0.1, 0.32, f),
+				"lunge": lerpf(0.05, 0.45, f), "stance": lerpf(0.5, 1.0, f)}
+		"light", "rising":
+			# Diagonal cuts. light: high right -> low left (flip mirrors); rising: low left -> high right
+			var sx := -1.0 if swing_flip else 1.0
+			var g0 := Vector3(0.26 * sx, 0.6, -0.08)
+			var d0 := _dir(0.9 * sx, 1.0)
+			var g1 := Vector3(-0.22 * sx, 0.02, -0.34)
+			var d1 := _dir(-1.05 * sx, -0.55)
+			var tw0 := -0.45 * sx
+			var tw1 := 0.55 * sx
+			if _action == "rising":
+				var gt := g0
+				g0 = g1
+				g1 = gt
+				var dt := d0
+				d0 = d1
+				d1 = dt
+				tw0 = 0.55 * sx
+				tw1 = -0.5 * sx
+			var wind := 0.3
+			var f := _ease((p - wind) / 0.3)
+			if p < wind:
+				var fw := _ease(p / wind)
+				return {"g": _gs_idle_g(s).lerp(g0, fw), "d": _gs_idle_d(s).slerp(d0, fw), "u": d0.cross(d1).normalized(),
+					"twist": lerpf(0.0, tw0, fw), "lean": 0.05, "crouch": 0.1, "stance": 0.5}
+			return {"g": g0.lerp(g1, f), "d": d0.slerp(d1, f), "u": d0.cross(d1).normalized(),
+				"twist": lerpf(tw0, tw1, f), "lean": lerpf(0.05, -0.3, f), "crouch": lerpf(0.1, 0.22, f),
+				"lunge": lerpf(0.05, 0.3, f), "stance": lerpf(0.5, 0.85, f)}
+		"overhead":
+			# Raise the blade high over the head, then bring it straight down into the ground ahead
+			var pitch: float
+			var f := _ease((p - 0.4) / 0.22)
+			if p < 0.4:
+				pitch = lerpf(0.4, 2.15, _ease(p / 0.4))
+			else:
+				pitch = lerpf(2.15, -0.42, f)
+			var gp := Vector3(0.03, 0.4, -0.12) + Vector3(0, sin(pitch), -cos(pitch)) * 0.45
+			return {"g": gp, "d": _dir(0.0, pitch + 0.25 * (1.0 - f)), "u": Vector3.RIGHT,
+				"twist": lerpf(-0.25, 0.1, f), "lean": lerpf(0.22, -0.45, f) if p >= 0.4 else 0.22 * _ease(p / 0.4),
+				"head": lerpf(0.2, -0.1, f), "crouch": lerpf(0.04, 0.34, f), "lunge": lerpf(0.0, 0.45, f),
+				"stance": lerpf(0.35, 1.0, f)}
+		"shout":
+			# Blade thrust up to the sky
+			return {"g": Vector3(0.06, 0.98, -0.12), "d": _dir(0.0, 1.45), "u": Vector3.RIGHT, "head": 0.4, "lean": 0.15}
+	if airborne:
+		return {"g": _gs_idle_g(1.0), "d": _gs_idle_d(1.0), "u": Vector3(0.6, 0, 0.8).normalized()}
+	return {"g": _gs_idle_g(s), "d": _gs_idle_d(s), "u": Vector3.RIGHT.lerp(Vector3(0.6, 0, 0.8), clampf(s * 2.0 - 0.6, 0, 1)).normalized()}
+
+
+## Standing: a low two-handed guard, tip angled down in front. Running: carried over the right shoulder.
+## Warden (one-handed): sword low at the right side, tip forward and down.
+func _gs_idle_g(s: float) -> Vector3:
+	if class_id != "arms":
+		return Vector3(0.34, 0.08 + sin(_t * 1.6) * 0.01, -0.3 + 0.06 * s)
+	var stand := Vector3(0.1, 0.06 + sin(_t * 1.6) * 0.01, -0.36)
+	return stand.lerp(Vector3(0.2, 0.3, -0.26), clampf(s * 2.0 - 0.6, 0.0, 1.0))
+
+
+func _gs_idle_d(s: float) -> Vector3:
+	if class_id != "arms":
+		return _dir(0.12, -0.55 - 0.2 * s)
+	return _dir(-0.3, -0.36).slerp(Vector3(0.45, 0.72, 0.53).normalized(), clampf(s * 2.0 - 0.6, 0.0, 1.0))
+
+
+## Ease the blade toward its target and close both hands around the grip.
+func _gs_apply(pose: Dictionary, k: float) -> void:
+	if pose.is_empty():
+		return
+	var d_t: Vector3 = pose["d"]
+	_gs_g = _gs_g.lerp(pose["g"], k)
+	_gs_d = _gs_d.slerp(d_t.normalized(), k).normalized()
+	_gs_u = _gs_u.slerp((pose["u"] as Vector3).normalized(), k).normalized()
+	var z := -_gs_d
+	var y := _gs_u - z * _gs_u.dot(z)
+	if y.length() < 0.05:
+		y = Vector3.UP - z * z.y if absf(z.y) < 0.95 else Vector3.RIGHT
+	y = y.normalized()
+	gs.transform = Transform3D(Basis(y.cross(z), y, z), _gs_g)
+	# Right hand by the crossguard, left hand (two-handed) lower on the grip
+	if class_id == "arms":
+		_arm_ik(arm_r, elbow_r, _gs_g + _gs_d * 0.06, Vector3(0.7, -0.6, 0.45))
+		_arm_ik(arm_l, elbow_l, _gs_g - _gs_d * 0.16, Vector3(-0.7, -0.6, 0.45))
+	else:
+		_arm_ik(arm_r, elbow_r, _gs_g, Vector3(0.8, -0.5, 0.4))
+
+
+## Two-bone IK in torso space: point the upper arm and bend the elbow so the hand reaches `target`.
+## The elbow sticks out toward `pole`.
+func _arm_ik(arm: Node3D, elbow: Node3D, target: Vector3, pole: Vector3) -> void:
+	var a := 0.3
+	var b := 0.3
+	var v := target - arm.position
+	var dist := clampf(v.length(), 0.08, a + b - 0.002)
+	var u := v.normalized()
+	var n := pole - u * pole.dot(u)
+	if n.length() < 0.01:
+		n = Vector3(0, 0, 1) - u * u.z
+	n = n.normalized()
+	var alpha := acos(clampf((a * a + dist * dist - b * b) / (2.0 * a * dist), -1.0, 1.0))
+	var bend := PI - acos(clampf((a * a + b * b - dist * dist) / (2.0 * a * b), -1.0, 1.0))
+	var w := (u * cos(alpha) + n * sin(alpha)).normalized()   # upper arm direction
+	var zb := (n - w * n.dot(w)).normalized()                  # back of the arm (elbow side)
+	var yb := -w
+	arm.basis = Basis(yb.cross(zb), yb, zb)
+	elbow.rotation = Vector3(bend, 0, 0)
 
 
 func world_combat() -> bool:
@@ -763,6 +1042,10 @@ func _animate_fx(delta: float) -> void:
 	else:
 		cast_orb.visible = false
 	sprint_fx.emitting = unit.has_aura("sprint") and _speed > 0.3
+	var whirling := unit.has_aura("steel_cyclone")
+	for r in cyclone_rings:
+		(r[0] as Node3D).rotate_object_local(Vector3.UP, float(r[6]) * delta)
+		(r[3] as WeaponTrail).emitting = whirling
 	_spiral_timer = maxf(0.0, _spiral_timer - delta)
 	blob.position.y = 0.03 - unit.position.y
 	blob.scale = Vector3.ONE * clampf(1.0 - unit.position.y * 0.15, 0.5, 1.0)
@@ -797,8 +1080,16 @@ func _animate_death(delta: float) -> void:
 	var ease_f := f * f * (3.0 - 2.0 * f)
 	body.rotation.x = lerpf(0.0, PI / 2.0, ease_f)
 	body.position.y = lerpf(0.0, 0.2, ease_f)
-	_lerp_rot(arm_l, Vector3(0.3, 0, -1.2), 0.1)
-	_lerp_rot(arm_r, Vector3(0.3, 0, 1.2), 0.1)
+	if gs != null:
+		# Still clutching the greatsword, laid along the body
+		_gs_apply({"g": Vector3(0.05, 0.25, -0.3), "d": _dir(0.0, -1.2), "u": Vector3.RIGHT}, 0.1)
+		for r in cyclone_rings:
+			(r[3] as WeaponTrail).emitting = false
+		if class_id != "arms":
+			_lerp_rot(arm_l, Vector3(0.3, 0, -1.2), 0.1)
+	else:
+		_lerp_rot(arm_l, Vector3(0.3, 0, -1.2), 0.1)
+		_lerp_rot(arm_r, Vector3(0.3, 0, 1.2), 0.1)
 	_lerp_rot(leg_l, Vector3(0.2, 0, -0.15), 0.1)
 	_lerp_rot(leg_r, Vector3(-0.1, 0, 0.15), 0.1)
 	cast_fx.emitting = false

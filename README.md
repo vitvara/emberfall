@@ -3,6 +3,15 @@
 A lightweight raid-boss game for macOS, made with Godot 4.7 and GDScript.
 You and four bots (a tank, a healer and DPS) fight **Vyrathax, the Cinder Tyrant**, a three-phase fire dragon.
 
+![Gameplay: the party fights Vyrathax as he inhales for Flame Breath](docs/media/gameplay.gif)
+
+| | |
+|---|---|
+| ![Vyrathax under a Frost Storm](docs/media/dragon.jpg) | ![Flame Breath sets the ground ablaze](docs/media/flame-breath.jpg) |
+| *Vyrathax, the Cinder Tyrant* | *Phase 1: Flame Breath* |
+| ![Phase 3 with Ember Whelps](docs/media/final-inferno.jpg) | ![Realm select screen](docs/media/title.jpg) |
+| *Phase 3: Final Inferno, with Ember Whelps* | *Realm select* |
+
 - **Design doc:** [DESIGN.md](DESIGN.md) covers stats, every skill, boss phases and bot AI.
 - **All numbers:** `scripts/data/game_data.gd`. Balancing means editing that file.
 

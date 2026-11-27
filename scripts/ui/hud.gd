@@ -167,6 +167,53 @@ func clear() -> void:
 		fight_ui.queue_free()
 		fight_ui = null
 	world = null
+	training = false
+
+
+var training := false  # Outpost training yard: just our frames, target frame and action bar
+
+
+## The Outpost's training dummies: a slim HUD (no dragon, party, meters, chat or game menu).
+func bind_training(w, ctrl) -> void:
+	world = w
+	controller = ctrl
+	training = true
+	if fight_ui:
+		fight_ui.queue_free()
+	party_rows.clear()
+	action_slots.clear()
+	fight_ui = Control.new()
+	fight_ui.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fight_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fight_ui.visible = false
+	root.add_child(fight_ui)
+	player_ui = _build_unit_frame(Vector2(16, 16))
+	target_ui = _build_unit_frame(Vector2(16, 138))
+	_build_action_bar()
+	_build_sheet()
+	msg_label = _center_label(18, Color.WHITE, 0.62)
+	error_label = _center_label(18, Color(1, 0.3, 0.3), 0.67)
+	ground_label = _center_label(17, Color(0.5, 1, 0.6), 0.72)
+	# Rebinding (hero changed) reuses the same controller and world: connect each handler once
+	for pair in [[controller.ground_mode, _on_ground_mode], [world.message, _on_message],
+			[controller.error_message, _on_error], [controller.toggle_character_sheet, _toggle_sheet]]:
+		if not (pair[0] as Signal).is_connected(pair[1]):
+			(pair[0] as Signal).connect(pair[1])
+
+
+func _on_ground_mode(t: String) -> void:
+	if ground_label and is_instance_valid(ground_label):
+		ground_label.text = t
+
+
+func _toggle_sheet() -> void:
+	if sheet and is_instance_valid(sheet):
+		sheet.visible = not sheet.visible
+
+
+func set_training_visible(on: bool) -> void:
+	if training and fight_ui:
+		fight_ui.visible = on
 
 
 # ------------------------------------------------------------------ fight UI
@@ -174,6 +221,7 @@ func clear() -> void:
 func bind(w, ctrl) -> void:
 	world = w
 	controller = ctrl
+	training = false
 	if fight_ui:
 		fight_ui.queue_free()
 	party_rows.clear()
@@ -613,8 +661,8 @@ func _on_chat(from: String, text: String, c: Color) -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if fight_ui == null:
-		return
+	if fight_ui == null or training:
+		return  # in the Outpost, Esc and Enter belong to the Outpost
 	var k := event as InputEventKey
 	if k.pressed and not k.echo and k.keycode == KEY_ESCAPE:
 		# Esc: leave chat > back out of the menu > cancel ground targeting (controller) > open the menu
@@ -864,6 +912,9 @@ func _update_taunt_warning() -> void:
 func _process(delta: float) -> void:
 	if world == null or fight_ui == null:
 		return
+	if training:
+		_process_training(delta)
+		return
 	_emote_t -= delta
 	_msg_t -= delta
 	if _vote_result_t > 0.0:
@@ -900,6 +951,24 @@ func _process(delta: float) -> void:
 		var lt: Array = Net.latency_text()
 		latency_label.text = lt[0]
 		latency_label.add_theme_color_override("font_color", lt[1])
+	if sheet.visible:
+		sheet_label.text = _sheet_text(world.player)
+
+
+func _process_training(delta: float) -> void:
+	if not fight_ui.visible or not is_instance_valid(world.player):
+		return
+	_msg_t -= delta
+	_error_t -= delta
+	msg_label.modulate.a = clampf(_msg_t, 0.0, 1.0)
+	error_label.modulate.a = clampf(_error_t, 0.0, 1.0)
+	_update_unit_frame(player_ui, world.player)
+	var t: Unit = world.player.target
+	target_ui["panel"].visible = t != null
+	if t != null:
+		_update_unit_frame(target_ui, t)
+	_update_action_bar()
+	_update_cast_bar()
 	if sheet.visible:
 		sheet_label.text = _sheet_text(world.player)
 

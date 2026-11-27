@@ -1,12 +1,13 @@
 class_name HubWorld
-extends Node3D
+extends RaidWorld
 ## The Outpost: a fortified war camp on a volcanic plateau where heroes gather before a raid.
 ## The raid portal (a carved stone gate around a fire-and-void vortex) stands in the middle of the
 ## camp; walking through it starts the fight against Vyrathax.
 ##
 ## The player is an ordinary Unit driven by a HubController, so movement, jumping, the camera and
-## the hero animation are exactly the ones used in the raid. This node stands in for RaidWorld for
-## the few things those read (clamp_to_arena, combat_active, shake, units).
+## the hero animation are exactly the ones used in the raid. The Outpost is a RaidWorld without a
+## dragon: skills, projectiles, ground zones, auras and damage numbers all work, which the training
+## dummies in the yard east of the portal use. Combat here is local to each player's game.
 ##
 ## Online, everyone logged in to the realm and not fighting walks the same Outpost: positions go to
 ## the realm 20/s and come back as a hub snapshot. Walking through the portal opens the War Party
@@ -15,7 +16,7 @@ extends Node3D
 
 signal portal_entered
 signal leave_requested
-signal shake(strength: float)
+signal player_changed  # the hero was swapped for another class (the HUD rebuilds its action bar)
 
 const ORIGIN := Vector3(0, 0, -900)  # far from the raid arena so the two maps never overlap
 const WALK_RADIUS := 40.0
@@ -25,12 +26,15 @@ const GATE_R := 4.2          # inner radius of the portal arch
 const GATE_CY := 5.0         # height of the arch's centre
 const GATE_HALF := 3.3       # half-width of the walk-through opening
 const PROMPT_DIST := 14.0
+const YARD := Vector3(30, 0, 6)       # training dummies
+const YARD_DIST := 24.0               # the training HUD shows this close to the yard
+const DUMMY_RESET := 6.0              # seconds without a hit before a dummy's DPS count resets
 const BUBBLE_TIME := 6.0
 
-var combat_active := false
-var units: Array = []
-var player: Unit
 var controller: HubController
+var dummies: Array = []      # [{unit, dmg, t0, last}]
+var _combat_t := 0.0
+var _hint: Label
 
 var _blockers: Array = []    # [Vector2 a, Vector2 b, radius]: capsules on the ground plane
 var _entering := false
@@ -72,6 +76,8 @@ var _carved: StandardMaterial3D
 func setup(class_id: String, is_online := false, display_name := "You") -> void:
 	online = is_online
 	position = ORIGIN
+	started = true      # no countdown in the Outpost
+	countdown = 0.0
 	_rng.seed = 1337
 	_wood = Models.mat(Color(0.33, 0.21, 0.13), 0.0, 0.95)
 	_wood_dark = Models.mat(Color(0.19, 0.12, 0.08), 0.0, 1.0)
@@ -93,7 +99,9 @@ func setup(class_id: String, is_online := false, display_name := "You") -> void:
 	player.setup_class(class_id, display_name)
 	player.position = SPAWN
 	player.rotation.y = 0.0
+	player.net_id = 1
 	units.append(player)
+	by_id[1] = player
 	controller = HubController.new()
 	add_child(controller)
 	controller.setup(self, player, false)
@@ -122,12 +130,18 @@ func set_player_class(cid: String) -> void:
 	np.setup_class(cid, old.unit_name)
 	np.position = old.position
 	np.rotation = old.rotation
+	np.net_id = 1
 	units.erase(old)
 	units.append(np)
+	by_id[1] = np
+	for d in dummies:
+		(d["unit"] as Unit).damage_by.erase(old)
+		(d["unit"] as Unit).threat.erase(old)
 	old.queue_free()
 	player = np
 	controller.unit = np
 	np.brain = controller
+	player_changed.emit()
 	Vfx.burst(self, np.position + Vector3(0, 1.2, 0), {"amount": 26, "lifetime": 0.6, "vmin": 1.0, "vmax": 3.0,
 		"size": 0.3, "colors": [Color(1, 0.85, 0.5, 1), Color(np.color, 0.8), Color(np.color, 0)]})
 
@@ -164,8 +178,14 @@ func party_all() -> Array:
 	return [player]
 
 
-func enemies_alive() -> Array:
-	return []
+## No dragon here: fights never "end", and a hit only puts the hero in a fighting stance for a while.
+func start_combat() -> void:
+	_combat_t = DUMMY_RESET
+	combat_active = true
+
+
+func _check_end() -> void:
+	pass
 
 
 func _block(x: float, z: float, r: float) -> void:
@@ -184,9 +204,8 @@ func _process(delta: float) -> void:
 	_t += delta
 	var d := minf(delta, 0.1)
 	controller.blocked = _entering or ui_blocked
-	if not controller.blocked:
-		controller.tick(d)
-	player.tick_jump(d)
+	tick(d)  # RaidWorld loop: the hero (via its controller), dummies, auras, projectiles, ground zones
+	_tick_dummies(d)
 	if online:
 		_online_tick(d)
 	for i in _portal_lights.size():
@@ -224,6 +243,61 @@ func _enter_portal() -> void:
 	tw.tween_property(player, "rotation:y", player.rotation.y + TAU, 0.7)
 	tw.tween_property(_fade, "color:a", 1.0, 0.85)
 	tw.chain().tween_callback(func(): portal_entered.emit())
+
+
+# ------------------------------------------------------------------ training dummies
+
+func _tick_dummies(d: float) -> void:
+	_combat_t -= d
+	if _combat_t <= 0.0:
+		combat_active = false
+	var now := Time.get_ticks_msec() / 1000.0
+	for e in dummies:
+		var u: Unit = e["unit"]
+		if u.hp < u.max_hp * 0.5 or not u.alive:
+			u.alive = true
+			u.hp = u.max_hp  # straw is cheap: it never breaks
+		var idle := now - float(e["last"]) > DUMMY_RESET
+		if idle and float(e["dmg"]) > 0.0:
+			e["dmg"] = 0.0
+			u.hp = u.max_hp
+			u.auras.clear()
+			u.damage_by.clear()
+		var txt := "Training Dummy"
+		if float(e["dmg"]) > 0.0:
+			var secs := maxf(now - float(e["t0"]), 1.0)
+			txt += "\n%s DPS" % _num(float(e["dmg"]) / secs)
+		u.nameplate.text = txt
+	# The training HUD (action bar, frames) only shows near the yard
+	var near := player.position.distance_to(YARD) < YARD_DIST
+	if not near and player.target != null and player.target in units:
+		player.target = null
+	if _hint:
+		_hint.visible = not near
+	training_near = near
+
+
+var training_near := false  # main shows the training HUD while this is true
+
+
+## RaidWorld hook: a hit on a dummy feeds its DPS readout.
+func on_damage(target: Unit, source: Unit, amount: float, absorbed: float, crit: bool, _label: String,
+		school := "physical") -> void:
+	super.on_damage(target, source, amount, absorbed, crit, _label, school)
+	for e in dummies:
+		if e["unit"] == target:
+			var now := Time.get_ticks_msec() / 1000.0
+			if float(e["dmg"]) <= 0.0:
+				e["t0"] = now
+			e["dmg"] = float(e["dmg"]) + amount + absorbed
+			e["last"] = now
+			start_combat()
+
+
+static func _num(v: float) -> String:
+	if v >= 10000.0:
+		return "%.1fk" % (v / 1000.0)
+	return str(int(v))
 
 
 # ------------------------------------------------------------------ online
@@ -984,14 +1058,26 @@ func _dummies(p: Vector3) -> void:
 	var sack := Models.mat(Color(0.55, 0.45, 0.3), 0.0, 1.0)
 	for i in 3:
 		var d := p + Vector3(0, 0, (i - 1) * 3.2)
-		Models.part(self, Models.cyl(0.1, 0.12, 2.4), _wood_dark, d + Vector3(0, 1.2, 0))
-		Models.part(self, Models.box(1.5, 0.12, 0.12), _wood, d + Vector3(0, 1.75, 0), Vector3(0, PI / 2.0, 0))
-		Models.part(self, Models.capsule(0.38, 1.1), straw, d + Vector3(0, 1.35, 0))
-		Models.part(self, Models.box(0.42, 0.42, 0.42), sack, d + Vector3(0, 2.15, 0), Vector3(0.1, 0.3, 0.05))
-		# Arrows and a cut sticking out of the straw
-		for k in 2:
+		# A real, targetable enemy with the dragon's armour, so the numbers match the raid
+		var model := Node3D.new()
+		Models.part(model, Models.cyl(0.1, 0.12, 2.4), _wood_dark, Vector3(0, 1.2, 0))
+		Models.part(model, Models.box(1.5, 0.12, 0.12), _wood, Vector3(0, 1.75, 0), Vector3(0, PI / 2.0, 0))
+		Models.part(model, Models.capsule(0.38, 1.1), straw, Vector3(0, 1.35, 0))
+		Models.part(model, Models.box(0.42, 0.42, 0.42), sack, Vector3(0, 2.15, 0), Vector3(0.1, 0.3, 0.05))
+		for k in 2:  # arrows stuck in the straw
 			var ar := Models.cyl(0.015, 0.015, 0.8)
-			Models.part(self, ar, _wood, d + Vector3(-0.5, 1.3 + k * 0.25, 0.1 - k * 0.2), Vector3(0.2, 0, PI / 2.0 + 0.2))
+			Models.part(model, ar, _wood, Vector3(-0.5, 1.3 + k * 0.25, 0.1 - k * 0.2), Vector3(0.2, 0, PI / 2.0 + 0.2))
+		var u := Unit.new()
+		u.world = self
+		u.net_id = 200 + i
+		add_child(u)
+		u.setup_mob("Training Dummy", 60000.0, float(GameData.BOSS["armor"]), 0.5, model, 2.9, 1.35)
+		u.position = d
+		u.rotation.y = -PI / 2.0  # face the plaza
+		u.nameplate.modulate = Color(1, 0.85, 0.5)
+		units.append(u)
+		by_id[u.net_id] = u
+		dummies.append({"unit": u, "dmg": 0.0, "t0": 0.0, "last": 0.0})
 		_block(d.x, d.z, 0.5)
 	# Archery butt
 	var butt := p + Vector3(4.0, 0, -6.0)
@@ -1072,8 +1158,9 @@ func _build_ui() -> void:
 	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_prompt.modulate.a = 0.0
 	root.add_child(_prompt)
-	var hint := UITheme.title("WASD move  ·  Space jump  ·  Right-drag camera  ·  Wheel zoom  ·  V view  ·  " +
+	var hint := UITheme.title("WASD move  ·  Space jump  ·  Right-drag camera  ·  V view  ·  Training dummies east of the portal  ·  " +
 		("Enter chat  ·  Esc war party" if online else "Esc change hero"), 15, UITheme.GOLD_DIM)
+	_hint = hint
 	_bottom(hint, 36)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(hint)

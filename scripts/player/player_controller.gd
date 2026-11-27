@@ -20,6 +20,7 @@ var _rmb := false
 var _trauma := 0.0
 var ground_aid := ""
 var blocked := false  # the Esc menu is open
+var local_only := false  # the Outpost: skills and targets stay in this game, nothing goes to the realm
 var reticle: MeshInstance3D
 var reticle_mat: StandardMaterial3D
 var _cine := 0.0  # 0..1: how much the camera looks toward the dragon while it flies in
@@ -210,13 +211,13 @@ func use_slot(i: int) -> void:
 ## Changes our target and tells the server when we are a network client.
 func set_target(u: Unit) -> void:
 	unit.target = u
-	if Net.is_client():
+	if Net.is_client() and not local_only:
 		Net.send_target(u)
 
 
 ## Uses an ability: locally (solo / host) or by asking the server (client).
 func _use(aid: String, tgt: Unit, point) -> String:
-	if not Net.is_client():
+	if not Net.is_client() or local_only:
 		return unit.use_ability(aid, tgt, point)
 	var err := unit.can_use(aid, tgt, point)
 	if err == "":

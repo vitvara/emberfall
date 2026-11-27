@@ -1,21 +1,28 @@
 class_name HubController
 extends PlayerController
-## Walking around the Outpost: same movement, jump and orbit camera as in the raid,
-## but no skills, targeting or party keys. Esc leaves the Outpost.
+## Walking around the Outpost: same movement, jump, orbit camera and skills as in the raid (the
+## training dummies take hits), all played out locally. Esc cancels ground aiming, then clears the
+## target, then leaves (offline) or opens the War Party window (online).
 
 signal leave_requested
+
+
+func setup(w, u: Unit, auto: bool) -> void:
+	super.setup(w, u, auto)
+	local_only = true
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if blocked:
 		return
-	if event is InputEventKey and event.pressed and not event.echo:
-		var k := (event as InputEventKey).physical_keycode
-		if k == KEY_ESCAPE:
+	if event is InputEventKey and event.pressed and not event.echo \
+			and (event as InputEventKey).physical_keycode == KEY_ESCAPE:
+		if ground_aid != "":
+			_cancel_ground()
+		elif unit.target != null:
+			set_target(null)
+		else:
 			leave_requested.emit()
-			return
-		if (k >= KEY_1 and k <= KEY_7) or k == KEY_TAB or k == KEY_C or (k >= KEY_F1 and k <= KEY_F5):
-			return  # no combat in the Outpost
-	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		return  # nothing to target
+		get_viewport().set_input_as_handled()
+		return
 	super._unhandled_input(event)

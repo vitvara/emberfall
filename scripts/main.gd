@@ -75,6 +75,8 @@ func _enter_hub(class_id: String, autoplay: bool) -> void:
 	hub.setup(class_id)
 	hub.portal_entered.connect(func(): _start_solo(last_class, last_auto))
 	hub.leave_requested.connect(_back_to_menu)
+	hub.player_changed.connect(func(): hud.bind_training(hub, hub.controller))
+	hud.bind_training(hub, hub.controller)
 	menu.hide_all()
 
 
@@ -91,6 +93,8 @@ func _enter_online_hub() -> void:
 	hub.setup(cid, true, Net.my_name)
 	hub.portal_entered.connect(func(): menu.show_screen("party"))
 	hub.leave_requested.connect(func(): menu.show_screen("party"))
+	hub.player_changed.connect(func(): hud.bind_training(hub, hub.controller))
+	hud.bind_training(hub, hub.controller)
 	menu.hide_all()
 	_hub_dev()
 
@@ -338,6 +342,7 @@ var _debug_t := 0.0
 func _process(delta: float) -> void:
 	if hub != null:
 		hub.ui_blocked = menu.visible
+		hud.set_training_visible(hub.training_near and not menu.visible)
 	if world != null and not (hud != null and hud.menu_open and not Net.is_net()):
 		world.tick(minf(delta, 0.1))  # the Esc menu pauses offline practice
 	for w in raids:
@@ -367,6 +372,24 @@ func _hub_dev() -> void:
 	if _args.has("hubwalk"):
 		var delay := float(_args["hubwalk"]) if _args["hubwalk"] != "true" else 1.0
 		hub.create_tween().tween_property(hub.player, "position", Vector3(0, 0, -0.8), 3.0).set_delay(delay)
+	if _args.has("hubtrain"):
+		# Dev: stand in the training yard, target the middle dummy and keep using skills
+		var h := hub
+		h.player.position = HubWorld.YARD + Vector3(-9, 0, 0)
+		h.player.rotation.y = -PI / 2.0
+		h.controller.yaw = -PI / 2.0
+		h.controller.pitch = 0.35
+		h.controller.set_target(h.dummies[1]["unit"])
+		var t := Timer.new()
+		t.wait_time = 0.7
+		t.autostart = true
+		h.add_child(t)
+		var i := [0]
+		t.timeout.connect(func():
+			h.controller.use_slot(i[0] % h.player.ability_ids.size())
+			if h.controller.ground_aid != "":
+				h.controller._cast_ground(h.dummies[1]["unit"].position)
+			i[0] += 1)
 	if _args.has("hubcircle"):
 		var h := hub
 		h.create_tween().tween_method(func(ang: float):

@@ -30,8 +30,33 @@ const YARD := Vector3(30, 0, 6)       # training dummies
 const YARD_DIST := 24.0               # the training HUD shows this close to the yard
 const DUMMY_RESET := 6.0              # seconds without a hit before a dummy's DPS count resets
 const BUBBLE_TIME := 6.0
+# The open world runs south from the camp's gate: the Ashen Causeway, then Brannoc's farm (new heroes
+# start there). More regions slot in along the road by moving FARM_C further south.
+const FARM_C := Vector3(0, 0, 210)    # centre of Brannoc's farm (FarmRegion)
+const ROAD_HALF := 4.0                # half-width of the walkable causeway (fits the gate opening)
+const ZONES := {
+	"outpost": ["Emberfall Outpost", "The last camp before the Cinder Tyrant's lair"],
+	"causeway": ["The Ashen Causeway", "The old road north to Emberfall"],
+	"farm": ["Brannoc's Farm", "The fields below Emberfall"],
+}
 
 var controller: HubController
+var farm: FarmRegion
+var terrain: WorldTerrain
+var dialog_open := false       # a quest dialog is open (the hero stands still)
+var _title: Label
+var _zone := ""
+var _zone_flash: Label
+var _zone_flash_t := 0.0
+# Sky: the farm lies under a clear sky, the Outpost under the ash; blended along the causeway
+static var _base_env: Environment
+var _env: Environment
+var _sky_m: ProceduralSkyMaterial
+var _night_sky: ProceduralSkyMaterial
+var _night_sun: DirectionalLight3D
+var _sun: DirectionalLight3D
+var _night: Dictionary = {}
+var _day_w := -1.0
 var dummies: Array = []      # [{unit, dmg, t0, last}]
 var _combat_t := 0.0
 var _hint: Label
@@ -73,7 +98,8 @@ var _rune: StandardMaterial3D
 var _carved: StandardMaterial3D
 
 
-func setup(class_id: String, is_online := false, display_name := "You") -> void:
+## start_farm: a new hero, who starts on the farm road; farm_done: the farm was saved already.
+func setup(class_id: String, is_online := false, display_name := "You", start_farm := false, farm_done := true) -> void:
 	online = is_online
 	position = ORIGIN
 	started = true      # no countdown in the Outpost
@@ -91,13 +117,24 @@ func setup(class_id: String, is_online := false, display_name := "You") -> void:
 	_build_palisade()
 	_build_camp()
 	_build_npcs()
+	_cull_far(self, 170.0)   # the camp's many small parts vanish into the haze from the farm
+	terrain = WorldTerrain.new()
+	add_child(terrain)
+	_build_causeway()
+	farm = FarmRegion.new()
+	add_child(farm)
+	farm.build(self, farm_done and not start_farm)
+	var t0 := Time.get_ticks_msec()
+	terrain.build(self)
+	print("[world] terrain built in %d ms" % (Time.get_ticks_msec() - t0))
 	_build_ui()
+	_setup_sky()
 	player = Unit.new()
 	player.world = self
 	player.is_player = true
 	add_child(player)
 	player.setup_class(class_id, display_name)
-	player.position = SPAWN
+	player.position = SPAWN if not start_farm else FARM_C + FarmRegion.FARM_SPAWN
 	player.rotation.y = 0.0
 	player.net_id = 1
 	units.append(player)
@@ -137,7 +174,12 @@ func set_player_class(cid: String) -> void:
 	for d in dummies:
 		(d["unit"] as Unit).damage_by.erase(old)
 		(d["unit"] as Unit).threat.erase(old)
-	old.queue_free()
+	# Hide the old hero and free it a little later: skill effects it scheduled (a swoosh timed to land
+	# with the blade) may still refer to it for a moment
+	old.visible = false
+	old.alive = false
+	old.brain = null
+	get_tree().create_timer(3.0).timeout.connect(old.queue_free)
 	player = np
 	controller.unit = np
 	np.brain = controller
@@ -152,8 +194,17 @@ func set_player_class(cid: String) -> void:
 ## this). Growing the world into open country = widen this and build the new ground; nothing else
 ## in the netcode assumes the camp's size.
 static func walk_bounds(p: Vector3) -> Vector3:
-	var flat := Vector2(p.x, p.z).limit_length(WALK_RADIUS)
-	return Vector3(flat.x, clampf(p.y, 0.0, 6.0), flat.y)
+	var f := Vector2(p.x, p.z)
+	var best := f.limit_length(WALK_RADIUS)                                   # the camp
+	if not best.is_equal_approx(f):
+		var road := Vector2(clampf(f.x, -ROAD_HALF, ROAD_HALF),
+			clampf(f.y, WALK_RADIUS - 10.0, FARM_C.z - FarmRegion.FARM_RADIUS + 8.0))   # the causeway
+		var fc := Vector2(FARM_C.x, FARM_C.z)
+		var farm_p := fc + (f - fc).limit_length(FarmRegion.FARM_RADIUS)        # the farm
+		for c in [road, farm_p]:
+			if (c as Vector2).distance_squared_to(f) < best.distance_squared_to(f):
+				best = c
+	return Vector3(best.x, clampf(p.y, 0.0, 6.0), best.y)
 
 
 func clamp_to_arena(p: Vector3) -> Vector3:
@@ -203,9 +254,11 @@ func _process(delta: float) -> void:
 		return
 	_t += delta
 	var d := minf(delta, 0.1)
-	controller.blocked = _entering or ui_blocked
+	controller.blocked = _entering or ui_blocked or dialog_open
 	tick(d)  # RaidWorld loop: the hero (via its controller), dummies, auras, projectiles, ground zones
 	_tick_dummies(d)
+	_tick_zone(d)
+	_tick_sky()
 	if online:
 		_online_tick(d)
 	for i in _portal_lights.size():
@@ -270,11 +323,13 @@ func _tick_dummies(d: float) -> void:
 		u.nameplate.text = txt
 	# The training HUD (action bar, frames) only shows near the yard
 	var near := player.position.distance_to(YARD) < YARD_DIST
-	if not near and player.target != null and player.target in units:
+	if not near and player.target != null and dummies.any(func(e): return e["unit"] == player.target):
 		player.target = null
 	if _hint:
 		_hint.visible = not near
-	training_near = near
+	if farm != null and farm.engaged():
+		combat_active = true
+	training_near = near or (farm != null and (farm.in_area(player.position) or farm.engaged()))
 
 
 var training_near := false  # main shows the training HUD while this is true
@@ -632,10 +687,19 @@ func _build_ground() -> void:
 				continue
 			Models.part(self, pm, stone, c)
 	# Cliff boulders around the plateau edge and out in the lava
-	EnvKit.rocks(self, _rng, 46, WALL_RADIUS + 3.0, WALL_RADIUS + 18.0, 1.5, 5.5)
-	EnvKit.rocks(self, _rng, 20, WALL_RADIUS + 20.0, 110.0, 2.0, 7.0)
-	EnvKit.lava_sea(self, 900.0)
-	EnvKit.volcanoes(self, _rng, 7, 150.0, 220.0)
+	var off_road := func(q: Vector3) -> bool: return not (absf(q.x) < ROAD_HALF + 9.0 and q.z > 20.0)
+	EnvKit.rocks(self, _rng, 46, WALL_RADIUS + 3.0, WALL_RADIUS + 18.0, 1.5, 5.5, off_road)
+	EnvKit.rocks(self, _rng, 20, WALL_RADIUS + 20.0, 110.0, 2.0, 7.0, off_road)
+	# The lava sea surrounds the plateau but stops short of the green country to the south
+	var lava := PlaneMesh.new()
+	lava.size = Vector2(900, 700)
+	var lava_mi := MeshInstance3D.new()
+	lava_mi.mesh = lava
+	lava_mi.material_override = EnvKit.lava_material()
+	lava_mi.position = Vector3(0, -1.6, -200)
+	lava_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(lava_mi)
+	EnvKit.volcanoes(self, _rng, 7, 150.0, 220.0, func(q: Vector3) -> bool: return q.z < 40.0)
 	Vfx.embers_ambient(self, 48.0)
 	# Warm under-light from the lava around the cliffs
 	for i in 6:
@@ -651,6 +715,178 @@ func _light(p: Vector3, c: Color, rng: float, energy: float) -> OmniLight3D:
 	l.light_energy = energy
 	add_child(l)
 	return l
+
+
+# ------------------------------------------------------------------ the open world: causeway, zones, sky
+
+## The Ashen Causeway: a raised road of ash and stone across the lava from the south gate to the
+## farmland, greening as it nears the farm. Future regions go along here.
+func _build_causeway() -> void:
+	var z0 := WALL_RADIUS - 2.0
+	var z1 := FARM_C.z - FarmRegion.FARM_RADIUS - 8.0
+	# A rough embankment of ash and stone under a paved road (Road Generator) across the lava
+	var body := Models.box(13.0, 4.0, z1 - z0 + 4.0)
+	Models.part(self, body, EnvKit.stone_material(), Vector3(0, -2.1, (z0 + z1) * 0.5))
+	WorldTerrain.build_causeway_road(self, z0 - 1.0, z1 + 14.0)
+	# Waymarks with lanterns for the night end
+	var zz := z0 + 14.0
+	var side := 1.0
+	while zz < z1 - 4.0:
+		var lp := Vector3(side * (ROAD_HALF + 1.4), 0, zz)
+		Models.part(self, Models.cyl(0.09, 0.12, 2.6), _wood_dark, lp + Vector3(0, 1.3, 0))
+		Models.part(self, Models.box(0.6, 0.08, 0.08), _wood_dark, lp + Vector3(-side * 0.25, 2.5, 0))
+		Models.part(self, Models.box(0.22, 0.3, 0.22), Models.mat(Color(1.0, 0.7, 0.35), 2.5), lp + Vector3(-side * 0.5, 2.25, 0))
+		var l := _light(lp + Vector3(-side * 0.5, 2.2, 0), Color(1.0, 0.6, 0.3), 9.0, 1.2)
+		l.set_meta("base", 1.2)
+		_block(lp.x, lp.z, 0.3)
+		zz += 18.0
+		side = -side
+	# Charred stumps and boulders along the edges
+	for i in 16:
+		var p := Vector3(_rng.randf_range(ROAD_HALF + 2.5, 12.0) * (1.0 if i % 2 == 0 else -1.0), 0,
+			_rng.randf_range(z0 + 6.0, z1))
+		if i % 3 == 0:
+			Models.part(self, Models.cyl(0.2, 0.32, _rng.randf_range(1.2, 3.0)), Models.mat(Color(0.08, 0.07, 0.06)), p + Vector3(0, 0.8, 0))
+		else:
+			var rock := SphereMesh.new()
+			rock.radial_segments = 6
+			rock.rings = 4
+			rock.radius = _rng.randf_range(0.6, 1.5)
+			rock.height = rock.radius * 1.4
+			Models.part(self, rock, Models.mat(Color(0.16, 0.14, 0.13), 0.0, 1.0), p, Vector3(_rng.randf(), _rng.randf() * TAU, 0))
+
+
+## Hide every small piece of scenery under `n` beyond `dist` metres from the camera (big backdrops
+## such as the lava sea, the plateau and the volcanoes stay).
+func _cull_far(n: Node, dist: float) -> void:
+	for c in n.get_children():
+		if c is GeometryInstance3D:
+			var g := c as GeometryInstance3D
+			if g.get_aabb().get_longest_axis_size() < 60.0 and g.visibility_range_end == 0.0:
+				g.visibility_range_end = dist
+				g.visibility_range_end_margin = 10.0
+		_cull_far(c, dist)
+
+
+func _zone_at(p: Vector3) -> String:
+	if farm != null and farm.in_area(p):
+		return "farm"
+	if Vector2(p.x, p.z).length() <= WALL_RADIUS + 1.0:
+		return "outpost"
+	return "causeway"
+
+
+## Entering a new zone: the title changes and its name flashes up, as in an MMO.
+func _tick_zone(d: float) -> void:
+	var z := _zone_at(player.position)
+	if z != _zone:
+		_zone = z
+		if _title != null:
+			_title.text = ZONES[z][0]
+		if _sub != null and not online:
+			_sub.text = ZONES[z][1]
+		if _zone_flash != null:
+			_zone_flash.text = ZONES[z][0]
+			_zone_flash_t = 3.5
+	if _zone_flash != null:
+		_zone_flash_t = maxf(0.0, _zone_flash_t - d)
+		_zone_flash.modulate.a = clampf(_zone_flash_t, 0.0, 1.0)
+
+
+## Take over the scene's sky and sun: the volcanic night is kept as the "night" end of the blend.
+func _setup_sky() -> void:
+	if farm == null or not farm._day:
+		return
+	var we: WorldEnvironment = null
+	for n in get_tree().root.find_children("*", "WorldEnvironment", true, false):
+		we = n
+	if we == null:
+		return
+	if we.environment != null and not we.environment.has_meta("open_world"):
+		_base_env = we.environment
+	if _base_env == null:
+		return
+	_env = _base_env.duplicate()
+	_env.set_meta("open_world", true)
+	_night_sky = _base_env.sky.sky_material as ProceduralSkyMaterial
+	_sky_m = _night_sky.duplicate()
+	var sky := Sky.new()
+	sky.sky_material = _sky_m
+	_env.sky = sky
+	we.environment = _env
+	for l in get_tree().root.find_children("*", "DirectionalLight3D", true, false):
+		if not is_ancestor_of(l) and (l as DirectionalLight3D).visible:
+			_night_sun = l
+	if _night_sun != null:
+		_night = {"color": _night_sun.light_color, "energy": _night_sun.light_energy, "rot": _night_sun.rotation}
+		_night_sun.visible = false
+	_sun = DirectionalLight3D.new()
+	_sun.shadow_enabled = true
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS   # (4 splits redraws every caster 4x)
+	_sun.directional_shadow_max_distance = 60.0
+	add_child(_sun)
+	_day_w = -1.0
+
+
+## Clear sky over the farm, ash and fire over the Outpost; blended by how far down the causeway the hero is.
+func _tick_sky() -> void:
+	if _env == null:
+		return
+	var z0 := WALL_RADIUS + 25.0
+	var z1 := FARM_C.z - FarmRegion.FARM_RADIUS - 5.0
+	var w := smoothstep(z0, z1, player.position.z)
+	if absf(w - _day_w) < 0.002:
+		return
+	_day_w = w
+	var b := _base_env
+	_sky_m.sky_top_color = _night_sky.sky_top_color.lerp(Color(0.26, 0.5, 0.9), w)
+	_sky_m.sky_horizon_color = _night_sky.sky_horizon_color.lerp(Color(0.72, 0.84, 0.95), w)
+	_sky_m.ground_horizon_color = _night_sky.ground_horizon_color.lerp(Color(0.62, 0.72, 0.56), w)
+	_sky_m.ground_bottom_color = _night_sky.ground_bottom_color.lerp(Color(0.28, 0.36, 0.2), w)
+	_sky_m.sky_curve = lerpf(_night_sky.sky_curve, 0.15, w)
+	_env.ambient_light_color = b.ambient_light_color.lerp(Color(0.7, 0.76, 0.82), w)
+	_env.ambient_light_energy = lerpf(b.ambient_light_energy, 0.95, w)
+	_env.tonemap_exposure = lerpf(b.tonemap_exposure, 1.15, w)
+	_env.glow_intensity = lerpf(b.glow_intensity, 0.3, w)
+	_env.glow_bloom = lerpf(b.glow_bloom, 0.03, w)
+	_env.fog_light_color = b.fog_light_color.lerp(Color(0.74, 0.84, 0.9), w)
+	_env.fog_density = lerpf(b.fog_density, 0.0022, w)
+	_env.fog_sky_affect = lerpf(b.fog_sky_affect, 0.2, w)
+	_env.fog_height_density = lerpf(b.fog_height_density, 0.0, w)
+	_env.adjustment_saturation = lerpf(b.adjustment_saturation, 1.1, w)
+	_env.adjustment_contrast = lerpf(b.adjustment_contrast, 1.0, w)
+	if not _night.is_empty():
+		_sun.light_color = (_night["color"] as Color).lerp(Color(1.0, 0.95, 0.84), w)
+		_sun.light_energy = lerpf(float(_night["energy"]), 1.35, w)
+		_sun.rotation = (_night["rot"] as Vector3).lerp(Vector3(deg_to_rad(-50), deg_to_rad(-35), 0), w)
+
+
+func _exit_tree() -> void:
+	if _env == null:
+		return
+	for n in get_tree().root.find_children("*", "WorldEnvironment", true, false):
+		if (n as WorldEnvironment).environment == _env:
+			(n as WorldEnvironment).environment = _base_env
+	if _night_sun != null and is_instance_valid(_night_sun):
+		_night_sun.visible = true
+
+
+# ------------------------------------------------------------------ farm hooks (MobBrain calls these on its world)
+
+func pull_group(group: int, target: Unit) -> void:
+	if farm != null:
+		farm.pull_group(group, target)
+
+
+func mob_nova(u: Unit, dmg: float) -> void:
+	if farm != null:
+		farm.mob_nova(u, dmg)
+
+
+func on_unit_died(u: Unit) -> void:
+	super.on_unit_died(u)
+	if farm != null:
+		farm.on_unit_died(u)
 
 
 # ------------------------------------------------------------------ the raid portal
@@ -1015,6 +1251,7 @@ func _forge(p: Vector3) -> void:
 	Models.part(self, Models.box(4.0, 0.4, 4.0), brick, p + Vector3(0, 3.3, 0))
 	Models.part(self, Models.cyl(0.8, 1.1, 4.5), brick, p + Vector3(-0.4, 5.6, 0))
 	Models.part(self, Models.box(0.06, 1.3, 1.6), Models.mat(Color(1.0, 0.45, 0.1), 5.0), p + Vector3(1.81, 1.0, 0))
+	_block(p.x, p.z, 2.6)
 	var fire := Vfx.emitter({"amount": 28, "lifetime": 0.7, "one_shot": false, "vmin": 0.6, "vmax": 1.6,
 		"direction": Vector3(0.4, 1, 0), "spread": 15.0, "box": Vector3(0.1, 0.2, 0.6), "size": 0.75, "shader": "flame_solid",
 		"colors": [Color(1, 0.9, 0.55, 1), Color(1, 0.5, 0.12, 0.9), Color(0.5, 0.1, 0.03, 0.4), Color(0.1, 0.05, 0.05, 0)]})
@@ -1027,7 +1264,6 @@ func _forge(p: Vector3) -> void:
 	smoke.position = p + Vector3(-0.4, 8.0, 0)
 	add_child(smoke)
 	_light(p + Vector3(3.0, 1.5, 0), Color(1.0, 0.5, 0.15), 13.0, 2.6)
-	_block(p.x, p.z, 2.6)
 	# Anvil, quench trough and a weapon rack
 	var anvil := p + Vector3(4.2, 0, 1.2)
 	Models.part(self, Models.cyl(0.35, 0.45, 0.7), _wood_dark, anvil + Vector3(0, 0.35, 0))
@@ -1149,6 +1385,7 @@ func _build_ui() -> void:
 	var title := UITheme.title("Emberfall Outpost", 34)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	top.add_child(title)
+	_title = title
 	var sub := UITheme.title("The last camp before the Cinder Tyrant's lair", 17, UITheme.GOLD_DIM)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	top.add_child(sub)
@@ -1166,6 +1403,16 @@ func _build_ui() -> void:
 	root.add_child(hint)
 	if online:
 		_build_online_ui(root)
+	# Zone name flashing up when the hero walks into a new region
+	_zone_flash = UITheme.title("", 44, Color(1, 0.9, 0.62))
+	_zone_flash.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_zone_flash.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_zone_flash.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_zone_flash.offset_top = -230
+	_zone_flash.offset_bottom = -170
+	_zone_flash.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_zone_flash.modulate.a = 0.0
+	root.add_child(_zone_flash)
 	_fade = ColorRect.new()
 	_fade.color = Color(0.07, 0.01, 0.05, 0.0)
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)

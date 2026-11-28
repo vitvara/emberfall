@@ -154,6 +154,7 @@ func _make_nameplate(height: float) -> void:
 	nameplate.outline_size = 6
 	nameplate.modulate = color if team == "party" else Color(1, 0.4, 0.3)
 	nameplate.position = Vector3(0, height, 0)
+	nameplate.visibility_range_end = 70.0   # (drawn through walls, so don't show names from across the map)
 	add_child(nameplate)
 
 
@@ -293,9 +294,11 @@ func _tick_auras(delta: float) -> void:
 
 func _aura_tick(a: Dictionary) -> void:
 	var e: Dictionary = a["def"]["tick_effect"]
-	var caster: Unit = a["caster"]
-	if caster == null:
+	var c = a["caster"]
+	if c == null or not is_instance_valid(c):
+		a["remaining"] = 0.0   # its caster is gone (e.g. the hero was swapped): the aura fades
 		return
+	var caster: Unit = c
 	if e["type"] == "heal":
 		var r: Array = caster.roll(e["base"], e["coef"], "holy", true)
 		receive_heal(r[0], caster, a["def"]["name"], r[1])

@@ -303,7 +303,7 @@ const BOSS := {
 	"name": "Vyrathax, the Cinder Tyrant",
 	"hp": 340000,
 	"armor": 3000,
-	"radius": 3.5,
+	"radius": 8.0,   # footprint of the 3x-scale dragon (RaidWorld.BOSS_SCALE)
 	"enrage_time": 360.0,
 	"melee": {"interval": 2.0, "damage": 420},
 	"rending_claw": {"interval": 10.0, "damage": 850},

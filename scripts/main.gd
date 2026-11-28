@@ -41,7 +41,7 @@ func _ready() -> void:
 	hud.quit_requested.connect(_quit_game)
 	menu = MenuUI.new()
 	add_child(menu)
-	menu.solo_start.connect(_enter_hub)
+	menu.solo_start.connect(_start_offline)
 	menu.connect_requested.connect(_connect_realm)
 	menu.login_requested.connect(func(u: String, p: String): Net.login(u, p))
 	menu.register_requested.connect(func(u: String, p: String): Net.register_account(u, p))
@@ -61,8 +61,25 @@ func _ready() -> void:
 
 # ------------------------------------------------------------------ modes
 
-## Offline: picking a hero drops you in the Outpost; walking through its portal starts the raid.
-func _enter_hub(class_id: String, autoplay: bool) -> void:
+## The open world (Outpost, Ashen Causeway, Brannoc's farm) is one map. A new hero starts on the farm
+## road and walks north to the Outpost; once the farm is saved, heroes start in the Outpost.
+func _start_offline(class_id: String, autoplay: bool) -> void:
+	_enter_hub(class_id, autoplay, not _farm_done())
+
+
+func _farm_done() -> bool:
+	return bool(menu.cfg_value("farm_done", false))
+
+
+## Hook the farm's quest to the player's saved progress (dev runs never mark it).
+func _watch_farm() -> void:
+	hub.farm.completed.connect(func():
+		if not _args.has("farm") and not _args.has("farmbot"):
+			menu.remember("farm_done", true))
+
+
+## Offline: the open world; walking through the Outpost's portal starts the raid.
+func _enter_hub(class_id: String, autoplay: bool, start_farm := false) -> void:
 	if Net.is_net():
 		Net.leave()
 	last_class = class_id
@@ -72,7 +89,8 @@ func _enter_hub(class_id: String, autoplay: bool) -> void:
 		preview.visible = false
 	hub = HubWorld.new()
 	add_child(hub)
-	hub.setup(class_id)
+	hub.setup(class_id, false, "You", start_farm, _farm_done() and not start_farm)
+	_watch_farm()
 	hub.portal_entered.connect(func(): _start_solo(last_class, last_auto))
 	hub.leave_requested.connect(_back_to_menu)
 	hub.player_changed.connect(func(): hud.bind_training(hub, hub.controller))
@@ -80,8 +98,9 @@ func _enter_hub(class_id: String, autoplay: bool) -> void:
 	menu.hide_all()
 
 
-## Online: logged-in players (and parties back from a raid) walk the realm's shared Outpost.
-func _enter_online_hub() -> void:
+## Online: logged-in players (and parties back from a raid) walk the realm's shared world. A new hero
+## starts on the farm (its quest runs locally).
+func _enter_online_hub(start_farm := false) -> void:
 	_clear_fight()
 	if preview:
 		preview.visible = false
@@ -90,7 +109,8 @@ func _enter_online_hub() -> void:
 		cid = String(menu.cfg_value("hero", "warden"))
 	hub = HubWorld.new()
 	add_child(hub)
-	hub.setup(cid, true, Net.my_name)
+	hub.setup(cid, true, Net.my_name, start_farm, _farm_done() and not start_farm)
+	_watch_farm()
 	hub.portal_entered.connect(func(): menu.show_screen("party"))
 	hub.leave_requested.connect(func(): menu.show_screen("party"))
 	hub.player_changed.connect(func(): hud.bind_training(hub, hub.controller))
@@ -104,7 +124,9 @@ func _choose_hero(cid: String) -> void:
 	menu.remember("hero", cid)
 	Net.request("set_hero", [cid])
 	if hub == null:
-		_enter_online_hub()
+		_enter_online_hub(not _farm_done() and not _args.has("skipfarm"))
+		if _args.has("farmbot"):
+			_farm_dev()
 	hub.set_player_class(cid)
 	menu.hide_all()
 
@@ -358,6 +380,15 @@ func _process(delta: float) -> void:
 			print("[%s] t=%.1f boss=%.1f%% units=%d hazards=%d started=%s ping=%d menu=%s" % [world.net_role, world.fight_time,
 				world.boss.hp_pct() * 100.0, world.units.size(), world.hazards.size(), world.started, Net.latency_ms(),
 				menu.visible if menu else false])
+	if _args.has("perf"):
+		# Dev: --perf prints frame rate and render load every 2 s
+		_debug_t -= delta
+		if _debug_t <= 0.0:
+			_debug_t = 2.0
+			print("[perf] fps=%d draws=%d tris=%dk objects=%d" % [Engine.get_frames_per_second(),
+				RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+				RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME) / 1000,
+				RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME)])
 	if _args.has("quit-at") and _clock >= float(_args["quit-at"]):
 		get_tree().quit()
 	if _hero_cam != null and hub != null:
@@ -432,12 +463,88 @@ func _hub_dev() -> void:
 				print("[train] ground aim %s, dummy at %s" % [g.snapped(Vector3.ONE * 0.1), dummy.position])
 				h.controller._cast_ground(g)
 			i[0] += 1)
+	if _args.has("swapat"):
+		# Dev: --swapat=<sec>[:class] swaps the hero mid-fight (Change Hero), e.g. with dots still ticking
+		var parts: PackedStringArray = String(_args["swapat"]).split(":")
+		var h3 := hub
+		get_tree().create_timer(float(parts[0])).timeout.connect(func():
+			if is_instance_valid(h3):
+				h3.set_player_class(parts[1] if parts.size() > 1 else "warden"))
 	if _args.has("hubcircle"):
 		var h := hub
 		h.create_tween().tween_method(func(ang: float):
 			var p := Vector3(cos(ang) * 16.0, 0, sin(ang) * 16.0 + 4.0)
 			h.player.rotation.y = atan2(-(p.x - h.player.position.x), -(p.z - h.player.position.z))
 			h.player.position = p, 0.0, 0.35 * 120.0, 120.0)
+
+
+func _farm_dev() -> void:
+	var h := hub
+	var farm: FarmRegion = h.farm
+	if _args.get("farmstage", "") in ["leader", "saved"]:
+		farm._accept_quest()
+		for m in farm._wave:
+			m.take_damage(1e9, "physical", h.player, "dev")
+		if _args["farmstage"] == "saved":
+			farm.leader.take_damage(1e9, "physical", h.player, "dev")
+	if not _args.has("farmbot"):
+		return
+	# A crude autopilot: talk to the farmer, fight the nearest raider with every skill, walk to the Outpost
+	var slot := [0, 0.0]
+	get_tree().process_frame.connect(func():
+		if hub != h or not is_instance_valid(h) or farm.stage == FarmRegion.Stage.DONE:
+			return
+		var d := get_process_delta_time()
+		var pl := h.player
+		if farm._dialog.visible:
+			farm._close_dialog()
+		if not pl.alive:
+			return
+		var goal := Vector3.INF
+		var foe: Unit = null
+		match farm.stage:
+			FarmRegion.Stage.ARRIVE, FarmRegion.Stage.SAVED:
+				goal = farm.farmer.position
+			FarmRegion.Stage.LEAVING:
+				goal = Vector3(0, 0, HubWorld.WALL_RADIUS - 6.0)   # up the causeway, through the south gate
+			_:
+				var best := 1e9
+				for m in farm.mobs:
+					if not m.alive:
+						continue
+					var dd := pl.position.distance_to(m.position)
+					if dd < best:
+						best = dd
+						foe = m
+				if foe != null:
+					goal = foe.position
+		if goal == Vector3.INF:
+			return
+		var reach := 2.5 if foe != null else 3.0
+		if pl.class_id in ["arcanist", "oracle"] and foe != null:
+			reach = 18.0
+		for hz in h.hazards:
+			var away: Vector3 = pl.position - (hz as Hazard).position
+			if away.length() < (hz as Hazard).radius + 1.0:
+				pl.casting = {}
+				pl.move_toward_point(pl.position + away.normalized() * 4.0, d, GameData.MOVE_SPEED)
+				return
+		if pl.position.distance_to(goal) > reach and not pl.is_casting():
+			pl.move_toward_point(goal, d, GameData.MOVE_SPEED)
+		elif foe != null:
+			pl.target = foe
+			pl.face_toward(foe)
+			slot[1] -= d
+			if slot[1] <= 0.0 and not pl.is_casting():
+				slot[1] = 0.3
+				# Damage rotation per class (slot numbers); healers patch themselves up below half health
+				var rot: Array = {"oracle": [2], "arcanist": [0, 1, 0]}.get(pl.class_id, range(pl.ability_ids.size()))
+				var s_i: int = rot[slot[0] % rot.size()]
+				if pl.class_id == "oracle" and pl.hp_pct() < 0.5:
+					pl.target = pl
+					s_i = 0
+				h.controller.use_slot(s_i)
+				slot[0] += 1)
 
 
 func _dev_flags() -> void:
@@ -495,6 +602,26 @@ func _dev_flags() -> void:
 	if args.has("hub"):
 		_enter_hub(args["hub"], false)
 		_hub_dev()
+	if args.has("farm"):
+		# Dev: --farm=<class> [--farmbot] [--farmstage=leader|saved]: play the starting farm (--farmbot fights it alone)
+		_enter_hub(args["farm"], false, true)
+		_farm_dev()
+	if args.has("perfoff") and hub != null:
+		# Dev: --perfoff=fx,shadow,terrain,glow switches parts off to see what costs frame time
+		var off: PackedStringArray = String(args["perfoff"]).split(",")
+		get_tree().create_timer(0.5).timeout.connect(func():
+			if "fx" in off:
+				for e in get_tree().root.find_children("*", "GPUParticles3D", true, false):
+					e.visible = false
+			if "shadow" in off and hub._sun != null:
+				hub._sun.shadow_enabled = false
+			if "terrain" in off and hub.terrain != null:
+				hub.terrain.visible = false
+			if "glow" in off and hub._env != null:
+				hub._env.glow_enabled = false
+			if "lights" in off:
+				for l in get_tree().root.find_children("*", "OmniLight3D", true, false):
+					l.visible = false)
 	if args.has("autostart"):
 		_start_solo(args["autostart"], args.has("autoplay"))
 	if args.has("zoom") and controller:

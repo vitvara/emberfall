@@ -12,6 +12,7 @@ const HEAL := Color(0.55, 1, 0.5)
 const STEEL := Color(0.75, 0.85, 1)
 const BLOOD := Color(1, 0.15, 0.1)
 const ARMS := Color(1, 0.45, 0.25)
+const MORTAL := Color(0.3, 0.58, 1.0)   # Mortal Blow: cold blue steel
 
 
 static func has_projectile(aid: String) -> bool:
@@ -64,6 +65,13 @@ static func _later(world, t: float, f: Callable) -> void:
 			f.call())
 
 
+## Seconds until the swing of `action` lands for this unit (skinned heroes time it from their clip).
+static func _hit(u: Unit, action: String) -> float:
+	if u != null and is_instance_valid(u) and u.model is HeroRig:
+		return (u.model as HeroRig).hit_delay(action)
+	return HeroRig.strike_delay(action)
+
+
 static func _rig(u: Unit) -> Node:
 	return u.model
 
@@ -86,7 +94,7 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 			Vfx.sparks(world, tp, STEEL, 20)
 			Vfx.shockwave(world, t.position if t else u.position, Color(0.5, 0.7, 1), 2.5, 0.3)
 		"charge":
-			_anim(u, "bash")
+			_anim(u, "dash" if u.class_id == "arms" else "bash")
 			Vfx.shockwave(world, u.position, Color(0.85, 0.7, 0.5), 3.0, 0.35)
 			Vfx.smoke(world, u.position, 0.8)
 			if t != null:
@@ -107,7 +115,7 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 		"execution_strike" when u.class_id == "arms":
 			_anim(u, "overhead")
 			_vertical_cleave(world, u, Color(1, 0.25, 0.1))
-			_later(world, HeroRig.strike_delay("overhead") + 0.1, func():
+			_later(world, _hit(u, "overhead") + 0.1, func():
 				Vfx.star_flash(world, tp, Color(1, 0.3, 0.2), 3.5)
 				Vfx.ground_crack(world, (t.position if t else u.position), Color(1, 0.35, 0.15), 2.5, 1.5)
 				Vfx.sparks(world, tp, BLOOD, 34)
@@ -126,23 +134,25 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 			Vfx.smoke(world, u.position, 1.0)
 		# ---- Arms Warden: wide, heavy greatsword arcs in ember red and steel
 		"mortal_blow":
-			# Wide horizontal cleave, right to left: a big flat crescent of light around the hero
+			# Wide horizontal cleave, right to left: a big flat crescent of blue light around the hero
 			_anim(u, "sweep")
-			_later(world, HeroRig.strike_delay("sweep"), func():
+			if u.model is HeroRig:
+				(u.model as HeroRig).tint_trails(MORTAL, 1.2)
+			_later(world, _hit(u, "sweep"), func():
 				var c := u.position + Vector3(0, 0.75, 0)
-				Vfx.swoosh(world, c, u.rotation.y, 0.0, ARMS, 2.1, 1.2, 250.0, 0.2, true, 1.3)
-				Vfx.swoosh(world, c + Vector3(0, 0.08, 0), u.rotation.y, 0.04, Color(0.55, 0.75, 1), 1.85, 0.5, 230.0, 0.2, true, 0.9))
-			_later(world, HeroRig.strike_delay("sweep") + 0.09, func():
-				Vfx.star_flash(world, tp, Color(1, 0.55, 0.3), 3.0)
-				Vfx.sparks(world, tp, ARMS, 26)
+				Vfx.swoosh(world, c, u.rotation.y, 0.0, MORTAL, 2.1, 1.2, 250.0, 0.2, true, 1.3)
+				Vfx.swoosh(world, c + Vector3(0, 0.08, 0), u.rotation.y, 0.04, Color(0.8, 0.92, 1), 1.85, 0.5, 230.0, 0.2, true, 0.9))
+			_later(world, _hit(u, "sweep") + 0.09, func():
+				Vfx.star_flash(world, tp, Color(0.55, 0.78, 1), 3.0)
+				Vfx.sparks(world, tp, Color(0.6, 0.82, 1), 26)
 				Vfx.blood_spray(world, tp, u.forward() + Vector3(0, 0.4, 0), 1.2)
 				world.shake.emit(0.25 if u.is_player else 0.05))
 		"overwhelm":
 			# Fast diagonal cut, high right to low left
 			_anim(u, "light")
-			_later(world, HeroRig.strike_delay("light"), func():
+			_later(world, _hit(u, "light"), func():
 				Vfx.swoosh(world, Vfx.chest(u) - Vector3(0, 0.25, 0), u.rotation.y, 0.75, STEEL, 2.0, 0.7, 170.0, 0.14, true))
-			_later(world, HeroRig.strike_delay("light") + 0.06, func():
+			_later(world, _hit(u, "light") + 0.06, func():
 				Vfx.x_slash(world, tp, Color(1, 0.75, 0.5), 1.4 if t and t.is_boss else 1.0)
 				Vfx.sparks(world, tp, STEEL, 12)
 				Vfx.buff_burst(world, u, ARMS, 0.6))
@@ -150,7 +160,7 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 			# Overhead smash straight down into the ground
 			_anim(u, "overhead")
 			_vertical_cleave(world, u, Color(1, 0.6, 0.25))
-			_later(world, HeroRig.strike_delay("overhead") + 0.1, func():
+			_later(world, _hit(u, "overhead") + 0.1, func():
 				Vfx.star_flash(world, tp, Color(1, 0.7, 0.35), 3.6)
 				Vfx.shockwave(world, (t.position if t else u.position), Color(1, 0.55, 0.25), 4.0, 0.4)
 				Vfx.ground_crack(world, u.position + u.forward() * 2.2, Color(1, 0.45, 0.2), 2.0, 1.2)
@@ -160,9 +170,9 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 		"deep_gash":
 			# Rising backhand, low left to high right
 			_anim(u, "rising")
-			_later(world, HeroRig.strike_delay("rising"), func():
+			_later(world, _hit(u, "rising"), func():
 				Vfx.swoosh(world, Vfx.chest(u) - Vector3(0, 0.25, 0), u.rotation.y, 0.75, BLOOD, 2.0, 0.8, 170.0, 0.16, false))
-			_later(world, HeroRig.strike_delay("rising") + 0.07, func():
+			_later(world, _hit(u, "rising") + 0.07, func():
 				Vfx.blood_spray(world, tp, u.forward() + Vector3(0, 0.3, 0), 1.0)
 				Vfx.x_slash(world, tp, BLOOD, 1.2 if t and t.is_boss else 0.9))
 		"steel_cyclone":
@@ -302,7 +312,7 @@ static func ability(world, u: Unit, aid: String, t: Unit, point = null) -> void:
 
 ## Greatsword overhead: a vertical crescent from high behind the head down to the ground ahead.
 static func _vertical_cleave(world, u: Unit, c: Color) -> void:
-	_later(world, HeroRig.strike_delay("overhead"), func():
+	_later(world, _hit(u, "overhead"), func():
 		Vfx.swoosh(world, u.position + Vector3(0, 1.15, 0) + u.forward() * 0.3, u.rotation.y, PI / 2.0, c, 2.1, 1.0,
 			200.0, 0.16, true, 1.2))
 
@@ -373,7 +383,7 @@ static func auto_attack(world, u: Unit, t: Unit) -> void:
 			return  # mid-skill: the hit still lands, the big swing keeps playing
 		var flip := not rig2.swing_flip
 		rig2.play("light", flip)
-		_later(world, HeroRig.strike_delay("light"), func():
+		_later(world, _hit(u, "light"), func():
 			Vfx.swoosh(world, Vfx.chest(u) - Vector3(0, 0.25, 0), u.rotation.y, -0.75 if flip else 0.75,
 				Color(1, 0.7, 0.5), 1.9, 0.5, 160.0, 0.14, not flip, 0.7))
 		return

@@ -3,3 +3,6 @@
 export/
 deploy/
 .DS_Store
+
+# Quaternius packs (Quaternius Asset License: no redistribution of the raw files). Download into this folder.
+assets/models/quaternius/

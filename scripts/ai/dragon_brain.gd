@@ -121,7 +121,7 @@ func _take_off() -> void:
 	meteor_timer = 4.0
 	unit.untargetable = true
 	unit.casting = {}
-	fly_height = 9.0
+	fly_height = 20.0   # high enough that the huge dragon's wings clear the arena
 	world.boss_emote("Vyrathax takes to the sky! Ember Whelps swarm in!")
 	world.boss_fx("takeoff")
 

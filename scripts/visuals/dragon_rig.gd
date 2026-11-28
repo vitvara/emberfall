@@ -1169,7 +1169,9 @@ func _animate_death(delta: float) -> void:
 	eye_mat.emission_energy_multiplier = lerpf(eye_mat.emission_energy_multiplier, 0.0, clampf(delta, 0.0, 1.0))
 	glow_mat.emission_energy_multiplier = lerpf(glow_mat.emission_energy_multiplier, 0.0, clampf(delta, 0.0, 1.0))
 	for sk in skin_mats:
-		var hv: float = (sk as ShaderMaterial).get_shader_parameter("heat")
-		(sk as ShaderMaterial).set_shader_parameter("heat", lerpf(hv, 0.0, clampf(delta, 0.0, 1.0)))
+		var hv = (sk as ShaderMaterial).get_shader_parameter("heat")
+		if hv == null:
+			continue   # never heated (a whelp that died before glowing)
+		(sk as ShaderMaterial).set_shader_parameter("heat", lerpf(float(hv), 0.0, clampf(delta, 0.0, 1.0)))
 	throat_mat.emission_energy_multiplier = 0.0
 	mouth_mat.albedo_color.a = 0.0

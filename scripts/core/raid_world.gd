@@ -22,6 +22,7 @@ var boss: Unit
 var player: Unit
 var visuals := true
 var arena_radius := 30.0
+const BOSS_SCALE := 3.0   # Vyrathax's size (the model; GameData.BOSS radius is its footprint)
 var net_role := "offline"
 var party_id := 0  # realm: which war party fights in this world
 var instant_spells := false  # headless balance sim: no projectile travel time
@@ -80,7 +81,7 @@ func setup_roster(roster: Array, local_peer: int, autoplay: bool) -> void:
 	boss = Unit.new()
 	boss.world = self
 	var b: Dictionary = GameData.BOSS
-	boss.setup_mob(b["name"], b["hp"], b["armor"], b["radius"], Models.make_dragon(), 11.5, 4.5)
+	boss.setup_mob(b["name"], b["hp"], b["armor"], b["radius"], Models.make_dragon(BOSS_SCALE), 30.0, 10.0)
 	boss.is_boss = true
 	boss.net_id = 100
 	boss.position = DragonBrain.ENTRY[0]  # far off in the ash clouds; flies in when the countdown ends

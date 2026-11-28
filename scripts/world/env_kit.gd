@@ -90,13 +90,16 @@ static func lava_sea(parent: Node3D, size := 400.0) -> void:
 
 
 ## Low-poly boulders scattered in a ring between two distances.
+## keep(pos) -> bool, optional: skip rocks where it returns false (e.g. on a road).
 static func rocks(parent: Node3D, rng: RandomNumberGenerator, count: int, d_min: float, d_max: float,
-		s_min := 1.0, s_max := 4.0) -> void:
+		s_min := 1.0, s_max := 4.0, keep := Callable()) -> void:
 	var rock_m := Models.mat(Color(0.12, 0.1, 0.1), 0.0, 1.0)
 	for i in count:
 		var a := rng.randf() * TAU
 		var d := rng.randf_range(d_min, d_max)
 		var rs := rng.randf_range(s_min, s_max)
+		if keep.is_valid() and not keep.call(Vector3(cos(a) * d, 0, sin(a) * d)):
+			continue
 		var rock := SphereMesh.new()
 		rock.radial_segments = 6
 		rock.rings = 4
@@ -107,11 +110,14 @@ static func rocks(parent: Node3D, rng: RandomNumberGenerator, count: int, d_min:
 
 
 ## Smouldering volcanoes on the horizon.
-static func volcanoes(parent: Node3D, rng: RandomNumberGenerator, count := 6, d_min := 140.0, d_max := 190.0) -> void:
+static func volcanoes(parent: Node3D, rng: RandomNumberGenerator, count := 6, d_min := 140.0, d_max := 190.0,
+		keep := Callable()) -> void:
 	for i in count:
 		var a := TAU * i / float(count) + 0.3
 		var d := rng.randf_range(d_min, d_max)
 		var hgt := rng.randf_range(45.0, 85.0)
+		if keep.is_valid() and not keep.call(Vector3(cos(a) * d, 0, sin(a) * d)):
+			continue
 		var cone := Models.cyl(hgt * 0.08, hgt * 0.75, hgt)
 		cone.radial_segments = 12
 		var vp := Vector3(cos(a) * d, hgt / 2.0 - 4.0, sin(a) * d)

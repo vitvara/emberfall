@@ -34,8 +34,8 @@ Start on a burning farm, walk the Ashen Causeway north to the Emberfall Outpost,
 
 Get the latest build from the [Releases page](https://github.com/vitvara/emberfall/releases): no install needed.
 
-- **Windows:** download `Emberfall-windows.exe` and run it (one file, nothing to unzip). If SmartScreen warns,
-  click **More info → Run anyway**.
+- **Windows:** download `Emberfall-windows.zip`, unzip it and run `Emberfall.exe`. Keep the `.dll` next to the
+  `.exe` (it's the terrain library). If SmartScreen warns, click **More info → Run anyway**.
 - **macOS:** download `Emberfall-macos.dmg`, open it and drag `Emberfall.app` to Applications. The first time,
   **right-click → Open** (or System Settings → Privacy & Security → **Open Anyway**), because the app isn't notarized.
   If macOS says the app is damaged, run `xattr -dr com.apple.quarantine /Applications/Emberfall.app` once.
